@@ -1,53 +1,12 @@
-// Camada de serviço: junta banco + regras e produz os relatórios e os textos das
-// notificações. Mantida separada do servidor HTTP para ser reutilizada pelo
-// agendador de lembretes.
+// Textos das notificações push (só no modo servidor).
 
-import { computeSemester, monthName } from './core/compliance.js';
-import { buildHolidayMap, expectedOffice, tripForDay, officeById } from './core/offices.js';
-import { addDays, isWeekend, mondayOf, nowInTimeZone, semesterOf } from './core/dates.js';
+import { monthName } from './core/compliance.js';
+import { expectedOffice, tripForDay, officeById } from './core/offices.js';
+import { mondayOf, semesterOf } from './core/dates.js';
 
-/** Feriados de cada dia do intervalo, segundo o escritório que vale nesse dia. */
-export function holidaysFor(settings, start, end, days) {
-  return buildHolidayMap(settings, start, end, days);
-}
-
-export function isWorkingDay(date, holidays) {
-  return !isWeekend(date) && !holidays.has(date);
-}
-
-export function semesterReport(repo, semester, today) {
-  const settings = repo.getSettings();
-  const days = repo.getDays(semester.start, semester.end);
-  const holidays = holidaysFor(settings, semester.start, semester.end, days);
-  const report = computeSemester({
-    semester,
-    today,
-    days,
-    holidays,
-    rules: settings.rules,
-    defaultPlan: (date) => (tripForDay(settings, date) ? 'office' : null),
-  });
-  return { report, holidays, days, settings };
-}
-
-/**
- * "Agora" no fuso do escritório previsto para hoje. Em viagem a outro fuso,
- * o lembrete das 9h passa a ser às 9h locais do destino.
- */
-export function localNow(repo, date = new Date()) {
-  const settings = repo.getSettings();
-  const primary = settings.offices.find((o) => o.id === settings.primaryOfficeId) || settings.offices[0];
-  let now = nowInTimeZone(primary.timezone, date);
-  const office = expectedOffice(settings, now.date);
-  if (office.timezone !== primary.timezone) now = nowInTimeZone(office.timezone, date);
-  return { ...now, officeId: office.id, timezone: office.timezone };
-}
-
-/** Primeiro dia útil da semana/mês — é quando enviamos os resumos. */
-export function firstWorkingDay(fromIso, toIso, holidays) {
-  for (let d = fromIso; d <= toIso; d = addDays(d, 1)) if (isWorkingDay(d, holidays)) return d;
-  return null;
-}
+// Relatório, feriados do dia e "agora" vivem em core/report.js (também usados
+// no modo local, no celular). Reexportados aqui para o agendador de lembretes.
+export { holidaysFor, isWorkingDay, semesterReport, localNow, firstWorkingDay } from './core/report.js';
 
 const fmtPct = (x) => `${Math.round(x * 100)}%`;
 const weekdayName = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];

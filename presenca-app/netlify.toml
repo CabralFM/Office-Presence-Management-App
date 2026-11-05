@@ -1,0 +1,7 @@
+# Netlify (alternativa gratuita ao Cloudflare Pages). Base directory: presenca-app
+[build]
+  command = "npm run build:static"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"

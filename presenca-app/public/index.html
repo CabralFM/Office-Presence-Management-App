@@ -6,14 +6,14 @@
   <meta name="theme-color" content="#1f6feb" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Presença</title>
-  <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-  <link rel="apple-touch-icon" href="/icon.svg" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="top">
-    <div class="brand"><img src="/icon.svg" alt="" width="28" height="28" /> Presença</div>
+    <div class="brand"><img src="icon.svg" alt="" width="28" height="28" /> Presença</div>
     <select id="semester-select" aria-label="Semestre"></select>
   </header>
 
@@ -101,20 +101,29 @@
 
         <div class="card">
           <h3>Lembretes</h3>
-          <p id="push-status" class="hint"></p>
-          <div class="row">
+          <div class="local-only" hidden>
+            <p class="hint">Esta versão funciona <b>sem servidor</b>: os dados ficam só neste celular. Os lembretes diários são criados no <b>calendário do próprio celular</b>, que avisa às 9h mesmo com a app fechada.</p>
+            <p id="cal-info" class="hint"></p>
+            <div class="row">
+              <button type="button" id="cal-ics" class="primary">📅 Adicionar lembretes ao calendário</button>
+              <button type="button" id="cal-google">Google Agenda (recorrente)</button>
+            </div>
+            <p class="hint">O arquivo do calendário já exclui feriados, férias e ausências registradas. Quando registrar novas férias ou viagens, gere-o de novo (os eventos são atualizados, não duplicados). O link do Google Agenda cria um evento seg–sex simples, sem saber dos feriados.</p>
+          </div>
+          <p id="push-status" class="hint server-only"></p>
+          <div class="row server-only">
             <button type="button" id="push-enable" class="primary">Ativar notificações neste dispositivo</button>
             <button type="button" id="push-test">Enviar teste</button>
           </div>
-          <label class="check"><input type="checkbox" name="reminderEnabled" /> Lembrete diário até eu responder</label>
+          <label class="check server-only"><input type="checkbox" name="reminderEnabled" /> Lembrete diário até eu responder</label>
           <div class="grid3">
             <label>Primeiro lembrete <input type="time" name="reminderTime" required /></label>
             <label>Repetir a cada (min) <input type="number" name="repeatMinutes" min="5" required /></label>
             <label>Parar às <input type="time" name="reminderUntil" required /></label>
           </div>
           <fieldset class="weekdays"><legend>Dias</legend></fieldset>
-          <label class="check"><input type="checkbox" name="weekly" /> Resumo semanal (1º dia útil da semana)</label>
-          <label class="check"><input type="checkbox" name="monthly" /> Resumo mensal (1º dia útil do mês)</label>
+          <label class="check server-only"><input type="checkbox" name="weekly" /> Resumo semanal (1º dia útil da semana)</label>
+          <label class="check server-only"><input type="checkbox" name="monthly" /> Resumo mensal (1º dia útil do mês)</label>
         </div>
 
         <div class="card">
@@ -135,9 +144,19 @@
           <label class="check"><input type="checkbox" name="askOnTimezoneChange" /> Perguntar se estou em viagem quando o fuso horário do aparelho for diferente do escritório previsto</label>
         </div>
 
+        <div class="card local-only" hidden>
+          <h3>Cópia de segurança</h3>
+          <p class="hint">Sem servidor, os dados existem <b>apenas neste aparelho</b>. Se trocar de celular, desinstalar a app ou limpar os dados do navegador, perde tudo — a não ser que tenha uma cópia. Faça uma cópia de vez em quando (ex.: no fim de cada mês) e guarde-a no Google Drive, iCloud ou e-mail.</p>
+          <p id="backup-info" class="hint"></p>
+          <div class="row">
+            <button type="button" id="backup-export" class="primary">💾 Fazer cópia de segurança</button>
+            <label class="button" style="margin:0">📂 Restaurar cópia<input type="file" id="backup-import" accept="application/json,.json" hidden /></label>
+          </div>
+        </div>
+
         <div class="card row sticky-actions">
           <button class="primary">Salvar configurações</button>
-          <a href="/api/export.csv" class="button">Exportar CSV</a>
+          <button type="button" id="export-csv">Exportar CSV</button>
           <button type="button" id="logout" hidden>Sair</button>
         </div>
       </form>
@@ -204,6 +223,6 @@
   </dialog>
 
   <div id="toast" role="status"></div>
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

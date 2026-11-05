@@ -1,11 +1,19 @@
 // Service worker: recebe as notificações push e trata os botões
 // "🏢 Escritório" / "🏠 Casa" SEM precisar abrir a app.
 
-const CACHE = 'presenca-v3';
-const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/core/geo.js', '/core/absences.js', '/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'presenca-v4';
+// Caminhos relativos ao service worker: funciona na raiz de um servidor e numa
+// subpasta de um site estático (ex.: GitHub Pages em /hello-world/).
+const SHELL = ['./', './index.html', './styles.css', './app.js', './config.js', './icon.svg', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // allSettled: se algum arquivo faltar (depende do modo), os outros ficam em cache na mesma.
+  e.waitUntil(
+    caches
+      .open(CACHE)
+      .then((c) => Promise.allSettled(SHELL.map((u) => c.add(u))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -17,7 +25,7 @@ self.addEventListener('activate', (e) => {
 // Rede primeiro (dados sempre frescos); cache só como plano B offline para a "casca" da app.
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/')) return;
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.includes('/api/')) return;
   e.respondWith(
     fetch(e.request)
       .then((res) => {
@@ -25,7 +33,7 @@ self.addEventListener('fetch', (e) => {
         caches.open(CACHE).then((c) => c.put(e.request, copy));
         return res;
       })
-      .catch(() => caches.match(e.request).then((r) => r || caches.match('/'))),
+      .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match('./'))),
   );
 });
 

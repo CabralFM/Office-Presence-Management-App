@@ -117,3 +117,23 @@ export function easterSunday(year) {
   const day = ((h + l - 7 * m + 114) % 31) + 1;
   return isoFromParts(year, month, day);
 }
+
+/**
+ * Converte "data + hora local num fuso" para o instante UTC.
+ * Ex.: ("2026-11-10", "09:00", "Europe/Lisbon") → 2026-11-10T09:00Z (inverno, UTC+0)
+ *      ("2026-07-10", "09:00", "Europe/Lisbon") → 2026-07-10T08:00Z (verão, UTC+1)
+ * Usado para pôr os lembretes no calendário à hora certa, inclusive em viagens.
+ */
+export function zonedTimeToUtc(iso, hhmm, timeZone) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const target = Date.UTC(y, m - 1, d) + minutesFromHHMM(hhmm) * 60_000;
+  let guess = target;
+  // Duas iterações chegam (a segunda corrige mudanças de horário de verão).
+  for (let i = 0; i < 2; i++) {
+    const local = nowInTimeZone(timeZone, new Date(guess));
+    const [ly, lm, ld] = local.date.split('-').map(Number);
+    const localMs = Date.UTC(ly, lm - 1, ld) + local.minutes * 60_000;
+    guess += target - localMs;
+  }
+  return new Date(guess);
+}

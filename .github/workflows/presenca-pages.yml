@@ -1,0 +1,56 @@
+# Publica a app Presença (modo local, sem servidor) no GitHub Pages — de graça.
+#
+# Requisitos (uma vez só):
+#   1. Repositório PÚBLICO (o GitHub Pages grátis só funciona em repositórios
+#      públicos). Só o CÓDIGO fica público: os seus dados de presença ficam no
+#      seu celular e nunca vão para o GitHub.
+#   2. Settings → Pages → Build and deployment → Source: "GitHub Actions".
+#
+# Depois disso, cada alteração na pasta presenca-app/ na branch master publica
+# automaticamente em https://<usuario>.github.io/<repositorio>/
+
+name: Publicar Presença (GitHub Pages)
+
+on:
+  push:
+    branches: [master]
+    paths: ['presenca-app/**', '.github/workflows/presenca-pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    # Em repositório privado (sem GitHub Pro) o Pages não está disponível:
+    # o job é saltado em vez de falhar. Use o Cloudflare Pages nesse caso.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    defaults:
+      run:
+        working-directory: presenca-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: presenca-app/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:static
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: presenca-app/dist
+      - id: deploy
+        uses: actions/deploy-pages@v4

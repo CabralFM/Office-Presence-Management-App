@@ -1,0 +1,132 @@
+// Modo LOCAL (sem servidor): mesma API, dados no "armazenamento do celular".
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createLocalRepo } from '../src/core/local-repo.js';
+import { createApi } from '../src/core/api.js';
+import { buildCsv } from '../src/core/export.js';
+import { buildReminderIcs, googleCalendarLink } from '../src/core/calendar.js';
+import { buildHolidayMap, normalizeSettings } from '../src/core/offices.js';
+import { DEFAULT_SETTINGS, deepMerge } from '../src/core/settings.js';
+
+/** Substituto do window.localStorage. */
+function fakeStorage() {
+  const m = new Map();
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), raw: m };
+}
+
+// "Hoje" = quinta 05/11/2026, 10h em Lisboa
+const clock = () => new Date('2026-11-05T10:00:00Z');
+
+function setup() {
+  const storage = fakeStorage();
+  const repo = createLocalRepo(storage);
+  const api = createApi({ repo, clock });
+  const call = (m, p, b) => api.handle(m, p, b);
+  call('POST', '/api/offices', { id: 'principal', name: 'Lisboa', country: 'PT', timezone: 'Europe/Lisbon', customHolidays: [{ date: '06-13', name: 'Santo António', scope: 'municipal' }], primary: true });
+  return { storage, repo, api, call };
+}
+
+test('fluxo completo sem servidor: registrar, ausência, viagem, relatório', () => {
+  const { call } = setup();
+  assert.equal(call('POST', '/api/checkin', { status: 'office' }).status, 200);
+  assert.equal(call('PUT', '/api/days/2026-11-04', { status: 'home' }).status, 200);
+  const ab = call('POST', '/api/absences', { type: 'ferias', start: '2026-12-21', end: '2027-01-01' });
+  assert.equal(ab.status, 200);
+  // 21/12–01/01: seg–sex 21,22,23,24,28,29,30,31 = 8 (25/12 e 01/01/2027 são feriados)
+  assert.equal(ab.data.days, 8);
+  call('POST', '/api/offices', { name: 'Madrid', country: 'ES', region: 'MD', customHolidays: [{ date: '11-09', name: 'Virgen de la Almudena', scope: 'municipal' }] });
+  const st0 = call('GET', '/api/state').data;
+  const madrid = st0.settings.offices.find((o) => o.name === 'Madrid');
+  assert.equal(call('POST', '/api/trips', { officeId: madrid.id, start: '2026-11-09', end: '2026-11-11' }).status, 200);
+
+  const st = call('GET', '/api/state?semester=2026-2').data;
+  assert.equal(st.now.date, '2026-11-05');
+  assert.equal(st.days['2026-11-05'].status, 'office');
+  assert.equal(st.report.totals.absenceByType.ferias, 8); // 21–31/12 (25/12 e 01/01 são feriados)
+  assert.equal(st.holidays['2026-11-09'].officeName, 'Madrid'); // Almudena, durante a viagem
+  assert.equal(st.meta.mode, undefined); // extraMeta não definido neste teste
+});
+
+test('os dados sobrevivem a "fechar e abrir a app" (novo repo sobre o mesmo armazenamento)', () => {
+  const { storage, call } = setup();
+  call('POST', '/api/checkin', { status: 'home' });
+  const again = createApi({ repo: createLocalRepo(storage), clock });
+  assert.equal(again.handle('GET', '/api/state').data.days['2026-11-05'].status, 'home');
+});
+
+test('mesmas validações do servidor (ex.: doença sem justificação, conflito 409)', () => {
+  const { call } = setup();
+  assert.equal(call('POST', '/api/absences', { type: 'doenca', start: '2026-11-03', end: '2026-11-03' }).status, 400);
+  call('PUT', '/api/days/2026-11-03', { status: 'office' });
+  const r = call('POST', '/api/absences', { type: 'doenca', start: '2026-11-03', end: '2026-11-03', justification: 'Atestado' });
+  assert.equal(r.status, 409);
+  assert.deepEqual(r.data.conflicts, ['2026-11-03']);
+});
+
+test('cópia de segurança: exportar → importar noutro aparelho', () => {
+  const a = setup();
+  a.call('POST', '/api/checkin', { status: 'office' });
+  a.call('POST', '/api/absences', { type: 'doenca', start: '2026-11-02', end: '2026-11-03', justification: 'Atestado nº 9' });
+  const backup = JSON.parse(JSON.stringify(a.repo.exportBackup()));
+
+  const b = createLocalRepo(fakeStorage());
+  assert.equal(b.importBackup(backup), 3);
+  assert.equal(b.getDay('2026-11-03').justification, 'Atestado nº 9');
+  assert.equal(b.getSettings().offices[0].name, 'Lisboa');
+  assert.throws(() => b.importBackup({ foo: 1 }), /não é uma cópia de segurança/);
+});
+
+test('CSV inclui ausências e justificação', () => {
+  const { repo, call } = setup();
+  call('POST', '/api/absences', { type: 'doenca', start: '2026-11-02', end: '2026-11-02', justification: 'Atestado; nº 9' });
+  const csv = buildCsv(repo.allDays(), repo.getSettings().offices);
+  assert.match(csv, /2026-11-02;Ausência;Doença;Atestado, nº 9;/);
+});
+
+// ---------------------------------------------------------------- calendário
+function calSetup(extra = {}) {
+  const settings = normalizeSettings(
+    deepMerge(DEFAULT_SETTINGS, {
+      offices: [
+        { id: 'lx', name: 'Lisboa', country: 'PT', timezone: 'Europe/Lisbon', customHolidays: [] },
+        { id: 'ny', name: 'Nova Iorque', country: 'US', region: 'NY', timezone: 'America/New_York', customHolidays: [] },
+      ],
+      primaryOfficeId: 'lx',
+      ...extra,
+    }),
+  );
+  return settings;
+}
+
+test('ICS: um lembrete por dia útil, sem fins de semana, feriados, férias nem dias respondidos', () => {
+  const settings = calSetup();
+  const days = new Map([
+    ['2026-11-30', { status: 'office' }], // já respondido
+    ['2026-12-02', { status: 'absence', absenceType: 'ferias' }],
+  ]);
+  const holidays = buildHolidayMap(settings, '2026-11-30', '2026-12-11', days);
+  const { ics, count } = buildReminderIcs({ settings, days, holidays, from: '2026-11-30', to: '2026-12-11', appUrl: 'https://ex.pt/app/', stamp: new Date('2026-11-01T00:00:00Z') });
+  // 30/11–11/12: 10 dias úteis − 01/12 e 08/12 (feriados) − 30/11 (respondido) − 02/12 (férias) = 6
+  assert.equal(count, 6);
+  assert.ok(!ics.includes('20261201T'), 'sem lembrete no feriado de 01/12');
+  assert.ok(!ics.includes('DTSTART:20261202T'), 'sem lembrete nas férias');
+  assert.ok(ics.includes('DTSTART:20261203T090000Z'), '09:00 em Lisboa no inverno = 09:00 UTC');
+  assert.equal((ics.match(/BEGIN:VALARM/g) || []).length, 6 * 3, '3 alertas por dia (9h00, 9h30, 10h00)');
+  assert.ok(ics.includes('TRIGGER:PT30M'));
+  assert.ok(ics.split('\r\n').every((l) => new TextEncoder().encode(l).length <= 75), 'linhas dobradas (RFC 5545)');
+});
+
+test('ICS: em viagem, o lembrete é às 9h do destino', () => {
+  const settings = calSetup({ trips: [{ id: 't', officeId: 'ny', start: '2026-11-16', end: '2026-11-17' }] });
+  const holidays = buildHolidayMap(settings, '2026-11-16', '2026-11-16');
+  const { ics } = buildReminderIcs({ settings, days: new Map(), holidays, from: '2026-11-16', to: '2026-11-16', appUrl: 'x' });
+  assert.ok(ics.includes('DTSTART:20261116T140000Z'), '09:00 em Nova Iorque = 14:00 UTC');
+  assert.ok(ics.includes('(Nova Iorque)'));
+});
+
+test('link do Google Agenda: evento recorrente seg–sex às 9h', () => {
+  const url = new URL(googleCalendarLink({ settings: calSetup(), appUrl: 'https://ex.pt/', firstDate: '2026-11-05' }));
+  assert.equal(url.searchParams.get('recur'), 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR');
+  assert.equal(url.searchParams.get('dates'), '20261105T090000Z/20261105T091500Z');
+  assert.equal(url.searchParams.get('ctz'), 'Europe/Lisbon');
+});

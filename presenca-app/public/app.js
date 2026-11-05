@@ -3,8 +3,15 @@
 // um passo de build e dependências a manter sem ganho real. Tudo aqui é
 // "render a partir do estado": cada ação chama a API e volta a desenhar.
 
-import { nearestOffice } from '/core/geo.js';
-import { ABSENCE_TYPES, ABSENCE_LABEL, ABSENCE_ICON } from '/core/absences.js';
+// Caminhos relativos: a app funciona tanto na raiz de um servidor como numa
+// subpasta de um site estático (ex.: https://usuario.github.io/hello-world/).
+import { nearestOffice } from './core/geo.js';
+import { ABSENCE_TYPES, ABSENCE_LABEL, ABSENCE_ICON } from './core/absences.js';
+import { MODE } from './config.js';
+
+const LOCAL = MODE === 'local';
+// No modo local o "backend" corre dentro do celular (carregado só neste modo).
+const localBackend = LOCAL ? import('./local-backend.js') : null;
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -31,18 +38,35 @@ let semesterId = null;
 let geoResult = null; // resultado do último check-in por localização (só em memória)
 
 // ---------------------------------------------------------------- API
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
-    body: opts.body && typeof opts.body !== 'string' ? JSON.stringify(opts.body) : opts.body,
-  });
-  if (res.status === 401 && path !== '/api/login') {
-    showLogin();
-    throw new Error('Não autenticado');
+class ApiError extends Error {
+  constructor(status, data) {
+    super(data.error || `Erro ${status}`);
+    this.status = status;
+    this.data = data;
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
+}
+
+async function api(path, opts = {}) {
+  const method = opts.method || 'GET';
+  let status;
+  let data;
+  if (LOCAL) {
+    // Sem rede: a mesma API, executada no próprio aparelho.
+    ({ status, data } = (await localBackend).localRequest(method, path, opts.body ? JSON.parse(JSON.stringify(opts.body)) : {}));
+  } else {
+    const res = await fetch(path.replace(/^\//, ''), {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    status = res.status;
+    data = await res.json().catch(() => ({}));
+  }
+  if (status === 401 && path !== '/api/login') {
+    showLogin();
+    throw new ApiError(401, { error: 'Não autenticado' });
+  }
+  if (status >= 400) throw new ApiError(status, data);
   return data;
 }
 
@@ -554,15 +578,17 @@ async function saveAbsence(overwrite = false) {
     replaceId: absenceEditId,
     overwrite,
   };
-  const res = await fetch('/api/absences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 409) {
-    const list = data.conflicts.slice(0, 6).map(fmtDM).join(', ');
-    if (confirm(`${data.error} (${list}${data.conflicts.length > 6 ? '…' : ''}). Substituir por ausência?`)) return saveAbsence(true);
-    return;
-  }
-  if (!res.ok) {
-    $('#ab-error').textContent = data.error || `Erro ${res.status}`;
+  let data;
+  try {
+    data = await api('/api/absences', { method: 'POST', body });
+  } catch (err) {
+    if (err.status === 409) {
+      const c = err.data.conflicts;
+      const list = c.slice(0, 6).map(fmtDM).join(', ');
+      if (confirm(`${err.message} (${list}${c.length > 6 ? '…' : ''}). Substituir por ausência?`)) return saveAbsence(true);
+      return;
+    }
+    $('#ab-error').textContent = err.message;
     return;
   }
   $('#absence-dialog').close();
@@ -666,7 +692,8 @@ function renderSettings() {
   f.windowEnd.value = s.location.windowEnd;
   f.askOnTimezoneChange.checked = s.askOnTimezoneChange;
   renderOffices();
-  renderPushStatus();
+  if (LOCAL) renderLocalCards();
+  else renderPushStatus();
 }
 
 let regionNames = null;
@@ -907,7 +934,7 @@ function urlBase64ToUint8Array(b64) {
 async function renderPushStatus() {
   const el = $('#push-status');
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    el.textContent = 'Este navegador não suporta notificações push. No iPhone, instale a app no tela de início (Compartilhar → Adicionar ao Tela de Início) e abra-a por lá.';
+    el.textContent = 'Este navegador não suporta notificações push. No iPhone, instale a app na Tela de Início (Compartilhar → Adicionar à Tela de Início) e abra-a por lá.';
     $('#push-enable').disabled = true;
     return;
   }
@@ -953,8 +980,88 @@ navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.type === 'checked-in') load();
 });
 
+// ---------------------------------------------------------------- modo local
+// Sem servidor: lembretes pelo calendário do celular + cópia de segurança.
+function download(filename, text, type) {
+  const blob = new Blob([text], { type });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+}
+
+/** Partilha um arquivo (folha de partilha do celular) ou, se não der, descarrega-o. */
+async function shareOrDownload(filename, text, type) {
+  try {
+    const file = new File([text], filename, { type });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: filename });
+      return;
+    }
+  } catch (e) {
+    if (e?.name === 'AbortError') return; // utilizador cancelou
+  }
+  download(filename, text, type);
+}
+
+function renderLocalCards() {
+  $$('.server-only').forEach((el) => (el.hidden = true));
+  $$('.local-only').forEach((el) => (el.hidden = false));
+  const r = S.settings.reminder;
+  $('#cal-info').textContent = `Lembretes às ${r.time}${r.repeatMinutes ? `, repetidos a cada ${r.repeatMinutes} min (até 3 alertas)` : ''}, nos dias úteis de hoje até ao fim do semestre — sem feriados, férias e dias já registrados.`;
+}
+
+$('#cal-ics').addEventListener('click', async () => {
+  const { ics, count, until } = (await localBackend).reminderIcs();
+  if (!count) return toast('Não há dias úteis por registrar até ao fim do semestre.');
+  await shareOrDownload(`presenca-lembretes-ate-${until}.ics`, ics, 'text/calendar');
+  toast(`${count} lembretes gerados. Abra o arquivo para adicioná-los ao calendário.`);
+});
+$('#cal-google').addEventListener('click', async () => {
+  window.open((await localBackend).googleLink(), '_blank', 'noopener');
+});
+$('#backup-export').addEventListener('click', async () => {
+  const text = (await localBackend).exportBackup();
+  await shareOrDownload(`presenca-copia-${S.now.date}.json`, text, 'application/json');
+  try {
+    localStorage.setItem('presenca:lastBackup', S.now.date);
+  } catch {}
+  renderBackupInfo();
+});
+$('#backup-import').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!confirm('Importar esta cópia SUBSTITUI todos os dados atuais deste aparelho. Continuar?')) return;
+  try {
+    const n = (await localBackend).importBackup(await file.text());
+    toast(`Cópia restaurada: ${n} dia(s).`);
+    await load();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+function renderBackupInfo() {
+  let last = null;
+  try {
+    last = localStorage.getItem('presenca:lastBackup');
+  } catch {}
+  $('#backup-info').textContent = last ? `Última cópia: ${fmtDM(last)}/${last.slice(0, 4)}.` : 'Ainda não fez nenhuma cópia de segurança.';
+}
+
+$('#export-csv').addEventListener('click', async () => {
+  if (LOCAL) download(`presenca-${S.now.date}.csv`, (await localBackend).exportCsv(), 'text/csv;charset=utf-8');
+  else location.href = 'api/export.csv';
+});
+
 // ---------------------------------------------------------------- inicialização
 async function boot() {
+  if (LOCAL) {
+    // Pede ao navegador para não apagar os dados por falta de espaço/uso.
+    navigator.storage?.persist?.().catch(() => {});
+  }
   const auth = await api('/api/auth');
   $('#logout').hidden = !auth.required;
   if (!auth.ok) return showLogin();
@@ -977,9 +1084,10 @@ async function boot() {
     locationCheckin();
   }
   if (params.has('checkin')) history.replaceState(null, '', location.pathname + location.hash);
+  if (LOCAL) renderBackupInfo();
 }
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
 boot().catch((e) => console.error(e));
 // Atualiza quando volta à app (ex.: respondeu pela notificação em outro momento)
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && S && load().catch(() => {}));

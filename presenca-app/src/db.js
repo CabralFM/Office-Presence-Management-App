@@ -7,43 +7,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { normalizeSettings } from './core/offices.js';
+import { DEFAULT_SETTINGS, deepMerge } from './core/settings.js';
+import { mergeDay, groupAbsences, absenceDates } from './core/days.js';
 
-export const DEFAULT_SETTINGS = {
-  // Escritórios (cada um com país, região, fuso, feriados e localização).
-  // Vazio aqui → normalizeSettings() cria o "Escritório principal".
-  offices: [],
-  primaryOfficeId: null,
-  // Viagens de trabalho: [{ id, officeId, start, end, note }]
-  trips: [],
-  // Regra mãe: officePct dos dias trabalháveis. O teto absoluto de dias em casa
-  // é opcional (enforceHomeCap) — ver src/core/compliance.js.
-  rules: { officePct: 50, maxHomeDays: 60, enforceHomeCap: false },
-  reminder: {
-    enabled: true,
-    time: '09:00',
-    repeatMinutes: 30, // repete a cada 30 min até você responder…
-    until: '18:00', //    …ou até esta hora
-    weekdays: [1, 2, 3, 4, 5],
-  },
-  location: {
-    enabled: false,
-    windowStart: '09:00',
-    windowEnd: '10:30',
-  },
-  // Perguntar quando o fuso do aparelho não bate com o do escritório previsto
-  askOnTimezoneChange: true,
-  summaries: { weekly: true, monthly: true },
-};
-
-const VALID_STATUS = new Set(['office', 'home', 'absence']);
-
-function deepMerge(base, patch) {
-  if (patch === undefined) return base;
-  if (Array.isArray(base) || Array.isArray(patch) || typeof base !== 'object' || base === null || patch === null) return patch;
-  const out = { ...base };
-  for (const [k, v] of Object.entries(patch)) out[k] = k in base ? deepMerge(base[k], v) : v;
-  return out;
-}
+export { DEFAULT_SETTINGS };
 
 export function openDb(file) {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
@@ -124,27 +91,9 @@ export function openDb(file) {
     },
 
     /** Grava/atualiza um dia. Campos ausentes mantêm o valor anterior; null apaga. */
-    upsertDay(date, { status, plan, source, note, distance, officeId, absenceType, justification, absenceId }) {
-      if (status != null && !VALID_STATUS.has(status)) throw new Error('status inválido');
-      if (plan != null && !VALID_STATUS.has(plan)) throw new Error('plan inválido');
-      const prev = repo.getDay(date) || {};
-      const next = {
-        status: status === undefined ? prev.status ?? null : status,
-        plan: plan === undefined ? prev.plan ?? null : plan,
-        source: source === undefined ? prev.source ?? null : source,
-        note: note === undefined ? prev.note ?? null : note,
-        distance: distance === undefined ? prev.distance ?? null : distance,
-        officeId: officeId === undefined ? prev.officeId ?? null : officeId,
-        absenceType: absenceType === undefined ? prev.absenceType ?? null : absenceType,
-        justification: justification === undefined ? prev.justification ?? null : justification,
-        absenceId: absenceId === undefined ? prev.absenceId ?? null : absenceId,
-      };
-      // O escritório só faz sentido em dias de escritório; tipo/justificação só em ausências.
-      if (next.status !== 'office') next.officeId = null;
-      if (next.status !== 'absence' && next.plan !== 'absence') {
-        next.absenceType = next.justification = next.absenceId = null;
-      }
-      if (!next.status && !next.plan && !next.note) {
+    upsertDay(date, patch) {
+      const next = mergeDay(repo.getDay(date), patch);
+      if (!next) {
         db.prepare('DELETE FROM days WHERE date = ?').run(date);
         return null;
       }
@@ -162,40 +111,24 @@ export function openDb(file) {
       return next;
     },
 
-    /**
-     * Períodos de ausência no intervalo, agrupados (dias com o mesmo absence_id;
-     * registros antigos sem id viram períodos de 1 dia).
-     */
+    /** Períodos de ausência no intervalo (ver core/days.js). */
     listAbsences(start, end) {
-      const rows = db
-        .prepare(`SELECT date, absence_type, justification, absence_id FROM days
-                  WHERE date BETWEEN ? AND ? AND (status = 'absence' OR (status IS NULL AND plan = 'absence')) ORDER BY date`)
-        .all(start, end);
-      const groups = new Map();
-      for (const r of rows) {
-        const id = r.absence_id || `dia-${r.date}`;
-        if (!groups.has(id)) groups.set(id, { id, type: r.absence_type || 'nao_especificado', justification: r.justification || '', start: r.date, end: r.date, days: 0 });
-        const g = groups.get(id);
-        g.end = r.date;
-        g.days++;
-      }
-      return [...groups.values()];
+      return groupAbsences([...repo.getDays(start, end)]);
     },
 
     /** Remove um período de ausência (os dias voltam a "sem registro"). */
     deleteAbsence(id) {
-      const rows = id.startsWith('dia-')
-        ? db.prepare(`SELECT date FROM days WHERE date = ? AND absence_id IS NULL`).all(id.slice(4))
-        : db.prepare('SELECT date FROM days WHERE absence_id = ?').all(id);
-      for (const { date } of rows) {
+      const dates = absenceDates([...repo.getDays('0000-01-01', '9999-12-31')], id);
+      for (const date of dates) {
         const prev = repo.getDay(date);
         repo.upsertDay(date, { status: prev.status === 'absence' ? null : prev.status, plan: prev.plan === 'absence' ? null : prev.plan });
       }
-      return rows.length;
+      return dates.length;
     },
 
+    /** Todos os dias, por ordem: [{ date, status, plan, ... }] */
     allDays() {
-      return db.prepare('SELECT * FROM days ORDER BY date').all();
+      return [...repo.getDays('0000-01-01', '9999-12-31')].map(([date, r]) => ({ date, ...r }));
     },
 
     // ---- push ---------------------------------------------------------------
