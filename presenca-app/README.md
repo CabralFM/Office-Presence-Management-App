@@ -144,6 +144,8 @@ O GitHub Pages grátis só funciona em repositórios **públicos**. Só o **cód
 3. **Settings → Pages → Source: GitHub Actions.**
 4. Em **Actions**, o workflow *Publicar Presença* roda sozinho (ou clique em *Run workflow*). Em ~2 min a app fica em `https://cabralfm.github.io/Office-Presence-Management-App/` (o endereço exato aparece em **Settings → Pages**; use-o tal como está, com as maiúsculas).
 
+> **Proteção contra versões antigas:** a publicação só avança se a versão da execução for a mais recente da `master` (verificado no início e logo antes de publicar). Um "Re-run" numa execução antiga termina com um aviso, sem repor o site antigo. Para republicar, use **Actions → Publicar Presença → Run workflow**.
+
 ### Opção B — Cloudflare Pages (o repositório continua privado)
 
 1. Crie conta grátis em <https://dash.cloudflare.com> (não pede cartão).
