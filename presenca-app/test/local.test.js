@@ -153,3 +153,42 @@ test('lista completa de feriados do escritório (Lisboa, 2026) e cidade guardada
   assert.equal(call('GET', '/api/state').data.settings.offices[0].city, 'lisboa');
   assert.equal(call('POST', '/api/offices', { name: 'X', country: 'PT', city: 'x'.repeat(41) }).status, 400);
 });
+
+test('início da contagem (admissão 02/11/2026, Lisboa): só contam 02/11–31/12', () => {
+  const { call } = setup();
+  assert.equal(call('PUT', '/api/settings', { rules: { startDate: '2026-13-01' } }).status, 400);
+  call('PUT', '/api/settings', { rules: { startDate: '2026-11-02' } });
+  call('PUT', '/api/days/2026-10-15', { status: 'home' }); // antes da admissão: ignorado
+  const r = call('GET', '/api/state?semester=2026-2').data.report;
+  // Nov: 21 dias de seg–sex (sem feriados em dia útil); Dez: 23 − 01/12, 08/12, 25/12 = 20
+  assert.equal(r.totals.working, 41);
+  assert.equal(r.requiredOffice, 21); // 50% de 41 = 20,5 → 21
+  assert.equal(r.totals.home, 0, 'o dia de outubro não conta');
+  assert.deepEqual(r.months.map((m) => m.key), ['2026-11', '2026-12']);
+  assert.equal(r.weeks[0].start, '2026-11-02');
+  assert.deepEqual(r.pendingDates, ['2026-11-02', '2026-11-03', '2026-11-04']);
+  assert.ok(r.alerts.some((a) => /Contagem a partir de 02\/11\/2026/.test(a.text)));
+
+  // Semestre anterior à admissão: sem metas
+  const r1 = call('GET', '/api/state?semester=2026-1').data.report;
+  assert.equal(r1.status, 'sem_contagem');
+  assert.equal(r1.requiredOffice, 0);
+
+  // Teto opcional proporcional: 60 × 41/128 = 19 → exige 41 − 19 = 22
+  call('PUT', '/api/settings', { rules: { enforceHomeCap: true } });
+  const r2 = call('GET', '/api/state?semester=2026-2').data.report;
+  assert.equal(r2.homeCap, 19);
+  assert.equal(r2.requiredOffice, 22);
+
+  // Sem data: volta a contar o semestre inteiro
+  call('PUT', '/api/settings', { rules: { startDate: null, enforceHomeCap: false } });
+  assert.equal(call('GET', '/api/state?semester=2026-2').data.report.totals.working, 128);
+});
+
+test('lembretes do calendário não começam antes da admissão', () => {
+  const settings = calSetup({ rules: { ...DEFAULT_SETTINGS.rules, startDate: '2026-12-03' } });
+  const holidays = buildHolidayMap(settings, '2026-11-30', '2026-12-04');
+  const { ics, count } = buildReminderIcs({ settings, days: new Map(), holidays, from: '2026-11-30', to: '2026-12-04', appUrl: 'x' });
+  assert.equal(count, 2); // 03 e 04/12
+  assert.ok(!ics.includes('DTSTART:20261202'));
+});

@@ -80,6 +80,8 @@ Com 10 dias de férias
  + 3 dias de doença:  115 trabalháveis → mínimo 58 no escritório (até 57 em casa)
 ```
 
+**Entrou na empresa a meio do semestre?** Em **Ajustes → Início da contagem (data de admissão)** defina a data: os dias anteriores não contam. Ex.: admissão em 02/11/2026, em Lisboa → contam 02/11–31/12 = 41 dias úteis → mínimo **21** no escritório (e não 64). Semestres anteriores aparecem como "Antes da admissão", sem metas. Se o teto de dias em casa estiver ligado, ele fica proporcional (60 × 41/128 = 19).
+
 As ausências reduzem a base, mas a **percentagem mantém-se**: continua a ser preciso estar no escritório em metade dos dias em que efetivamente trabalhou. Repare que, com 13 dias de ausência, os dias em casa possíveis descem de 64 para 57. As ausências não "poupam" dias de casa.
 
 **E os 60 dias de home office?** Em semestres de cerca de 120 dias trabalháveis, 60 dias equivalem aos 50%. Por isso, por padrão, a app aplica só a regra mãe. Se a empresa contar os 60 dias de forma rígida *além* dos 50%, ligue **Ajustes → Aplicar também um teto absoluto**. Só faz diferença em semestres longos: com 128 dias trabalháveis passa a exigir 128 − 60 = 68 dias no escritório em vez de 64, e a app indica quando isso acontece.
@@ -118,7 +120,7 @@ presenca-app/
 │   ├── local-backend.js     liga a interface a core/api.js dentro do celular
 │   └── sw.js                service worker: offline (+ push no modo servidor)
 ├── scripts/build-static.mjs ← gera o site estático em dist/ (esbuild)
-└── test/                  ← node:test (48 testes, incluindo o modo local)
+└── test/                  ← node:test (51 testes, incluindo o modo local)
 ```
 
 - **Por que funciona sem servidor?** Todas as regras são funções puras em `src/core/`. No modo local, a interface chama `core/api.js` diretamente dentro do celular, com os dados no armazenamento do navegador. No modo servidor, o Express chama exatamente a mesma função. Por isso os dois modos se comportam igual e os mesmos testes cobrem ambos.
@@ -141,6 +143,8 @@ O GitHub Pages grátis só funciona em repositórios **públicos**. Só o **cód
 2. **Settings → General → Danger Zone → Change visibility → Public.**
 3. **Settings → Pages → Source: GitHub Actions.**
 4. Em **Actions**, o workflow *Publicar Presença* roda sozinho (ou clique em *Run workflow*). Em ~2 min a app fica em `https://cabralfm.github.io/Office-Presence-Management-App/` (o endereço exato aparece em **Settings → Pages**; use-o tal como está, com as maiúsculas).
+
+> **Proteção contra versões antigas:** a publicação só avança se a versão da execução for a mais recente da `master` (verificado no início e logo antes de publicar). Um "Re-run" numa execução antiga termina com um aviso, sem repor o site antigo. Para republicar, use **Actions → Publicar Presença → Run workflow**.
 
 ### Opção B — Cloudflare Pages (o repositório continua privado)
 
@@ -186,7 +190,7 @@ Só é necessário se quiser notificações push que repetem **até responder** 
 ```bash
 cd presenca-app
 npm install
-npm test          # 48 testes: regras, ausências, feriados, viagens, lembretes, API e modo local
+npm test          # 51 testes: regras, ausências, feriados, viagens, lembretes, API e modo local
 npm start         # http://localhost:3000
 ```
 

@@ -12,6 +12,10 @@
 //   com 10 férias + 3 doença:      115 trabalháveis → 58 no escritório (57,5 arredondado para cima)
 // Ou seja: as ausências reduzem a base, mas a percentagem mantém-se.
 //
+// Início da contagem (`startDate`, ex.: data de admissão): os dias anteriores
+// não contam para nada. Ex.: admissão em 02/11/2026 → no 2º semestre de 2026
+// só contam 02/11–31/12 (41 dias úteis em Lisboa → mínimo 21 no escritório).
+//
 // Regra opcional (desligada por padrão): `enforceHomeCap` aplica também um
 // teto ABSOLUTO de `maxHomeDays` (60) em casa. Só faz diferença em semestres
 // com mais de 120 dias trabalháveis (128 − 60 = 68 > 64). Ligue-a apenas se a
@@ -37,10 +41,11 @@ const plural = (n, s, p) => `${n} ${n === 1 ? s : p}`;
  *   pending                  → dia passado sem registro (precisa de ser preenchido)
  *   open                     → hoje/futuro ainda por decidir (pode ter plan office/home)
  */
-export function classifyDays({ semester, today, days, holidays, defaultPlan }) {
+export function classifyDays({ semester, today, days, holidays, defaultPlan, startDate }) {
   const out = [];
   for (const date of eachDay(semester.start, semester.end)) {
     if (isWeekend(date)) continue;
+    if (startDate && date < startDate) continue; // antes do início da contagem (admissão)
     const holiday = holidays.get(date);
     if (holiday) {
       out.push({ date, kind: 'holiday', holiday });
@@ -111,14 +116,24 @@ export function allocate(n, capacities) {
 
 export function computeSemester({ semester, today, days, holidays, rules, defaultPlan }) {
   const pct = rules.officePct / 100;
-  const classified = classifyDays({ semester, today, days, holidays, defaultPlan });
+  // Início da contagem dentro (ou depois) deste semestre?
+  const startDate = rules.startDate && rules.startDate > semester.start ? rules.startDate : null;
+  const classified = classifyDays({ semester, today, days, holidays, defaultPlan, startDate });
   const totals = emptyCounts();
   for (const d of classified) count(totals, d);
+  const notStarted = Boolean(startDate && startDate > semester.end);
 
   // ---- metas do semestre --------------------------------------------------
   const base = totals.working - totals.absence; // dias efetivamente trabalhados
   const requiredByPct = Math.ceil(base * pct - 1e-9);
-  const requiredByCap = rules.enforceHomeCap ? Math.max(0, base - rules.maxHomeDays) : 0;
+  // Teto de dias em casa (opcional). Num semestre incompleto (admissão a meio),
+  // o teto é proporcional: 60 × (dias úteis contados ÷ dias úteis do semestre).
+  let homeCap = rules.maxHomeDays;
+  if (startDate && !notStarted) {
+    const full = classifyDays({ semester, today, days, holidays }).filter((d) => d.kind !== 'holiday').length;
+    homeCap = full > 0 ? Math.floor((rules.maxHomeDays * totals.working) / full) : 0;
+  }
+  const requiredByCap = rules.enforceHomeCap ? Math.max(0, base - homeCap) : 0;
   const requiredOffice = Math.max(requiredByPct, requiredByCap);
   const bindingRule = requiredByCap > requiredByPct ? 'teto' : 'percentual';
   const maxHome = base - requiredOffice;
@@ -130,7 +145,8 @@ export function computeSemester({ semester, today, days, holidays, rules, defaul
   const paceNeeded = undecided > 0 ? officeNeeded / undecided : officeNeeded > 0 ? Infinity : 0;
 
   let status;
-  if (officeNeeded === 0) status = 'cumprido';
+  if (notStarted) status = 'sem_contagem';
+  else if (officeNeeded === 0) status = 'cumprido';
   else if (officeNeeded > undecided) status = 'impossivel';
   else if (paceNeeded <= baselinePace + 0.02) status = 'ok';
   else if (paceNeeded <= baselinePace + 0.2) status = 'atencao';
@@ -208,6 +224,9 @@ export function computeSemester({ semester, today, days, holidays, rules, defaul
     paceNeeded: Number.isFinite(paceNeeded) ? paceNeeded : null,
     status,
     plan,
+    startDate, // início da contagem dentro deste semestre (null = semestre inteiro)
+    notStarted, // o semestre é todo anterior ao início da contagem
+    homeCap,
     pendingDates: classified.filter((d) => d.kind === 'pending').map((d) => d.date),
     // Ausências de tipo que exige justificação e que ficaram sem ela
     unjustifiedAbsences: classified
@@ -225,6 +244,15 @@ export function buildAlerts(r) {
   const alerts = [];
   const pctTxt = `${r.rules.officePct}%`;
   const add = (level, text) => alerts.push({ level, text });
+  const fmtFull = (iso) => `${fmtDM(iso)}/${iso.slice(0, 4)}`;
+
+  if (r.notStarted) {
+    add('info', `Este semestre é anterior ao início da contagem (${fmtFull(r.startDate)}): não há metas a cumprir.`);
+    return alerts;
+  }
+  if (r.startDate) {
+    add('info', `Contagem a partir de ${fmtFull(r.startDate)}: neste semestre contam ${r.totals.working} dias úteis (e não o semestre inteiro).`);
+  }
 
   if (r.status === 'impossivel') {
     add(
@@ -285,7 +313,7 @@ export function buildAlerts(r) {
   }
 
   if (r.bindingRule === 'teto') {
-    add('info', `Neste semestre o teto de ${r.rules.maxHomeDays} dias em casa é mais exigente do que os ${pctTxt}: precisa de ${r.requiredOffice} dias no escritório (e não ${r.requiredByPct}).`);
+    add('info', `Neste semestre o teto de ${r.homeCap} dias em casa${r.homeCap !== r.rules.maxHomeDays ? ` (proporcional aos ${r.rules.maxHomeDays})` : ''} é mais exigente do que os ${pctTxt}: precisa de ${r.requiredOffice} dias no escritório (e não ${r.requiredByPct}).`);
   }
 
   // Resumo das ausências: mostra como a base foi reduzida

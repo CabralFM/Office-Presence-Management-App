@@ -27,7 +27,8 @@ export async function tick(repo, push, date = new Date()) {
   const actions = decide({
     now,
     settings,
-    isWorkingDay: isWorkingDay(now.date, holidays),
+    // Antes do início da contagem (admissão) não há lembretes.
+    isWorkingDay: isWorkingDay(now.date, holidays) && !(settings.rules.startDate && now.date < settings.rules.startDate),
     answered: Boolean(day?.status || day?.plan === 'absence'),
     reminderState: repo.getReminderState(now.date),
     sentKeys: repo.sentKeys([weekKey, monthKey]),

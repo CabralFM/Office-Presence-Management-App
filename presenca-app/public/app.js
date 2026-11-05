@@ -21,7 +21,7 @@ const LABEL = { office: 'Escritório', home: 'Casa', absence: 'Ausência' };
 const ICON = { office: '🏢', home: '🏠', absence: '🌴' };
 const DOW = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 const STATUS_TXT = {
-  ok: 'Em dia', atencao: 'Atenção', critico: 'Crítico', impossivel: 'Meta inalcançável', cumprido: 'Meta cumprida',
+  ok: 'Em dia', atencao: 'Atenção', critico: 'Crítico', impossivel: 'Meta inalcançável', cumprido: 'Meta cumprida', sem_contagem: 'Antes da admissão',
 };
 const fmtDM = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 const fmtLong = (iso) => {
@@ -150,6 +150,12 @@ function renderToday() {
       ? `Escritório de referência hoje: <b>${h(officeName(expected))}</b> (feriados deste local).`
       : '';
   const head = `<div class="big">Hoje, ${h(fmtLong(t.date))}</div>${where ? `<p class="hint">${where}</p>` : ''}<div id="tz-banner"></div>`;
+  const start = S.settings.rules.startDate;
+  if (start && t.date < start) {
+    el.innerHTML = `${head}<p>⏳ A contagem de presença começa em <b>${fmtDM(start)}/${start.slice(0, 4)}</b> (início da contagem, em Ajustes). Até lá não há nada a registrar.</p>`;
+    renderTzBanner();
+    return;
+  }
   if (!t.workingDay) {
     el.innerHTML = `${head}<p>${t.holiday ? `🎉 Feriado: <b>${h(t.holiday.name)}</b> (${h(t.holiday.officeName)})` : 'Fim de semana — bom descanso! 😌'}</p>`;
     renderTzBanner();
@@ -314,14 +320,20 @@ function renderGeoResult() {
 function renderSemester() {
   const r = S.report;
   const t = r.totals;
+  if (r.notStarted) {
+    $('#semester-card').innerHTML = `<h3>${h(r.semester.label)} <span class="badge sem_contagem">${STATUS_TXT.sem_contagem}</span></h3>
+      <p class="hint">Este semestre é anterior ao início da contagem (${fmtDM(r.startDate)}/${r.startDate.slice(0, 4)}). Não há metas a cumprir.</p>`;
+    return;
+  }
   const donePct = r.requiredOffice ? Math.min(100, (t.office / r.requiredOffice) * 100) : 100;
   const planPct = r.requiredOffice ? Math.min(100, (r.plan.officeWithPlan / r.requiredOffice) * 100) : 100;
   $('#semester-card').innerHTML = `
     <h3>${h(r.semester.label)} <span class="badge ${r.status}">${STATUS_TXT[r.status]}</span></h3>
+    ${r.startDate ? `<p class="hint">📌 Contagem a partir de <b>${fmtDM(r.startDate)}/${r.startDate.slice(0, 4)}</b> (data de início).</p>` : ''}
     <div class="bar" title="Escritório: feitos + planejados"><i class="plan" style="width:${planPct}%"></i><i style="width:${donePct}%"></i></div>
     <p class="hint">${t.office} de ${r.requiredOffice} dias obrigatórios no escritório${r.plan.officeWithPlan > t.office ? ` (+${r.plan.officeWithPlan - t.office} planejados)` : ''}.
       Regra: <b>${r.rules.officePct}% de ${t.base} dias trabalháveis = ${r.requiredByPct}</b>${
-        r.bindingRule === 'teto' ? ` — mas o teto de ${r.rules.maxHomeDays} dias em casa (ativo) exige <b>${r.requiredOffice}</b>` : ''
+        r.bindingRule === 'teto' ? ` — mas o teto de ${r.homeCap} dias em casa (ativo) exige <b>${r.requiredOffice}</b>` : ''
       }.</p>
     <div class="stats">
       <div class="stat"><b>${t.base}</b><span>dias trabalháveis = ${t.working} úteis − ${t.absence} ausência(s)${
@@ -361,12 +373,18 @@ function dayInfo(date) {
   const trip = tripFor(date);
   // Dias de viagem sem plano explícito contam como "planejado escritório" (igual ao servidor).
   const plan = rec.status ? null : rec.plan || (trip && date >= S.now.date ? 'office' : null);
-  return { hol, rec, trip, plan, weekend: wd === 0 || wd === 6, past: date < S.now.date, today: date === S.now.date, future: date > S.now.date };
+  const beforeStart = Boolean(S.settings.rules.startDate && date < S.settings.rules.startDate);
+  return { hol, rec, trip, plan, beforeStart, weekend: wd === 0 || wd === 6, past: date < S.now.date, today: date === S.now.date, future: date > S.now.date };
 }
 
 function dayClasses(date) {
-  const { hol, rec, plan, weekend, past, today } = dayInfo(date);
+  const { hol, rec, plan, beforeStart, weekend, past, today } = dayInfo(date);
   const c = ['day'];
+  if (beforeStart && !weekend) {
+    c.push('before-start');
+    if (today) c.push('today');
+    return c.join(' ');
+  }
   if (weekend) c.push('weekend');
   else if (hol) c.push('holiday');
   else if (rec.status) c.push(rec.status);
@@ -409,6 +427,7 @@ function renderCalendar() {
   const scopeTxt = { nacional: 'nacional', facultativo: 'facultativo', municipal: 'municipal', estadual: 'estadual/regional', empresa: 'empresa' };
   $('#holiday-list').innerHTML =
     Object.entries(S.holidays)
+      .filter(([d]) => !S.settings.rules.startDate || d >= S.settings.rules.startDate)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([d, x]) => {
         const wd = new Date(d + 'T12:00:00Z').getUTCDay();
@@ -421,6 +440,7 @@ function renderCalendar() {
 function openDay(date) {
   const { hol, rec, weekend, future } = dayInfo(date);
   if (weekend) return;
+  if (dayInfo(date).beforeStart) return toast('Antes do início da contagem (data de admissão).');
   if (hol) return toast(`Feriado: ${hol.name} (${hol.officeName})`);
   const dlg = $('#day-dialog');
   $('#dd-title').textContent = fmtLong(date);
@@ -487,7 +507,7 @@ function renderPlanning() {
           const d = addDaysIso(w.start, i);
           const inSem = d >= S.semester.start && d <= S.semester.end;
           const { hol, rec, plan, trip, future, today } = dayInfo(d);
-          const disabled = !inSem || hol || (!future && !today) || rec.status;
+          const disabled = !inSem || hol || (!future && !today) || rec.status || dayInfo(d).beforeStart;
           const cls = rec.status || (plan ? `plan-${plan}` : '');
           const lbl = hol ? '🎉' : rec.status ? dayIcon(rec) : plan ? ICON[plan] + (trip ? '✈️' : '') : '·';
           return `<button data-plan="${d}" class="${cls}" ${disabled ? 'disabled' : ''} title="${h(hol?.name || '')}">${DOW[i + 1]} ${fmtDM(d)}<br>${lbl}</button>`;
@@ -711,6 +731,7 @@ function renderSettings() {
   else renderPushStatus();
   if (settingsDirty) return;
   f.officePct.value = s.rules.officePct;
+  f.startDate.value = s.rules.startDate || '';
   f.maxHomeDays.value = s.rules.maxHomeDays;
   f.enforceHomeCap.checked = Boolean(s.rules.enforceHomeCap);
   f.maxHomeDays.disabled = !f.enforceHomeCap.checked;
@@ -988,13 +1009,24 @@ $('#of-save').addEventListener('click', async () => {
 });
 
 $('#office-add').addEventListener('click', () => openOffice(null));
+$('#start-clear').addEventListener('click', () => {
+  const f = $('#settings-form');
+  f.startDate.value = '';
+  settingsDirty = true;
+  toast('Sem data de início: conta o semestre inteiro. Salve para aplicar.');
+});
 $('#settings-form').enforceHomeCap.addEventListener('change', (e) => (e.target.form.maxHomeDays.disabled = !e.target.checked));
 
 $('#settings-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
   const patch = {
-    rules: { officePct: Number(f.officePct.value), maxHomeDays: Number(f.maxHomeDays.value), enforceHomeCap: f.enforceHomeCap.checked },
+    rules: {
+      officePct: Number(f.officePct.value),
+      maxHomeDays: Number(f.maxHomeDays.value),
+      enforceHomeCap: f.enforceHomeCap.checked,
+      startDate: f.startDate.value || null,
+    },
     reminder: {
       enabled: f.reminderEnabled.checked,
       time: getTime(f, 'reminderTime'),

@@ -64,6 +64,7 @@ export function buildReminderIcs({ settings, days, holidays, from, to, appUrl, s
   for (let d = from; d <= to; d = addDays(d, 1)) {
     const wd = new Date(d + 'T12:00:00Z').getUTCDay();
     if (isWeekend(d) || holidays.has(d) || !r.weekdays.includes(wd)) continue;
+    if (settings.rules?.startDate && d < settings.rules.startDate) continue; // antes da admissão
     const rec = days.get(d);
     if (rec?.status || rec?.plan === 'absence') continue; // já respondido / férias
     const office = expectedOffice(settings, d);

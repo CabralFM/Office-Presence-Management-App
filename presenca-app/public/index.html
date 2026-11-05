@@ -92,6 +92,10 @@
       <form id="settings-form">
         <div class="card">
           <h3>Regra da empresa</h3>
+          <label>Início da contagem (data de admissão)
+            <div class="row"><input type="date" name="startDate" /><button type="button" id="start-clear">Sem data</button></div>
+          </label>
+          <p class="hint">Os dias anteriores não contam para nada. Ex.: admissão em 02/11/2026 → no 2º semestre de 2026 contam só os dias úteis de 02/11 a 31/12 (41 em Lisboa), e o mínimo é 50% deles (21). Deixe vazio para contar o semestre inteiro.</p>
           <label>% mínima no escritório, sobre os dias úteis trabalháveis do semestre <input type="number" name="officePct" min="0" max="100" required /></label>
           <p class="hint">Regra mãe. Dias trabalháveis = dias úteis (sem fins de semana e feriados do local de trabalho) − férias e ausências.</p>
           <label class="check"><input type="checkbox" name="enforceHomeCap" /> Aplicar também um teto absoluto de dias em casa</label>
