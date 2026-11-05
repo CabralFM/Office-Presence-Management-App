@@ -73,6 +73,12 @@
           <button class="primary">Adicionar viagem</button>
         </form>
       </div>
+      <div class="card" id="absences-card">
+        <h3>Férias e ausências</h3>
+        <p class="hint">Dias de ausência (férias, doença, licença, folga…) <b>saem da base</b>: a regra dos 50% passa a ser calculada só sobre os dias trabalháveis. Ex. (Lisboa, 2º sem. 2026): 128 dias úteis − 13 de ausência = 115 trabalháveis → mínimo 58 no escritório.</p>
+        <ul id="absences" class="list"></ul>
+        <div class="row"><button type="button" id="absence-add" class="primary">+ Registrar férias / ausência</button></div>
+      </div>
       <div class="card" id="plan-summary"></div>
       <div class="card">
         <h3>Semanas</h3>
@@ -86,10 +92,11 @@
       <form id="settings-form">
         <div class="card">
           <h3>Regra da empresa</h3>
-          <div class="grid2">
-            <label>% mínima no escritório <input type="number" name="officePct" min="0" max="100" required /></label>
-            <label>Máx. dias em casa / semestre <input type="number" name="maxHomeDays" min="0" max="200" required /></label>
-          </div>
+          <label>% mínima no escritório, sobre os dias úteis trabalháveis do semestre <input type="number" name="officePct" min="0" max="100" required /></label>
+          <p class="hint">Regra mãe. Dias trabalháveis = dias úteis (sem fins de semana e feriados do local de trabalho) − férias e ausências.</p>
+          <label class="check"><input type="checkbox" name="enforceHomeCap" /> Aplicar também um teto absoluto de dias em casa</label>
+          <label>Teto de dias em casa / semestre <input type="number" name="maxHomeDays" min="0" max="200" required /></label>
+          <p class="hint">Desligado, o número de dias em casa é simplesmente o que sobra dos 50% (ex.: 115 trabalháveis → mínimo 58 no escritório, até 57 em casa). Ligue só se a empresa contar o limite de 60 dias de forma rígida <i>além</i> dos 50% — num semestre de 128 dias isso exige 68 no escritório em vez de 64.</p>
         </div>
 
         <div class="card">
@@ -145,6 +152,24 @@
       <label id="dd-office-wrap" hidden>Escritório (se esteve no escritório) <select id="dd-office"></select></label>
       <label>Nota <input type="text" id="dd-note" placeholder="opcional" /></label>
       <div class="row end"><button value="cancel">Fechar</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="absence-dialog">
+    <form id="absence-form" method="dialog">
+      <h3 id="ab-title">Registrar férias / ausência</h3>
+      <fieldset id="ab-types" class="types"><legend>Tipo</legend></fieldset>
+      <div class="grid2">
+        <label>De <input type="date" name="start" required /></label>
+        <label>Até (inclusive) <input type="date" name="end" required /></label>
+      </div>
+      <p class="hint">Só os dias úteis do período contam (fins de semana e feriados são ignorados).</p>
+      <label><span id="ab-just-label">Justificação</span>
+        <textarea name="justification" rows="3" maxlength="500"></textarea>
+      </label>
+      <p id="ab-hint" class="hint"></p>
+      <p id="ab-error" class="error"></p>
+      <div class="row end"><button value="cancel" formnovalidate>Cancelar</button><button type="button" id="ab-save" class="primary">Salvar</button></div>
     </form>
   </dialog>
 

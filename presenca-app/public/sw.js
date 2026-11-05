@@ -1,8 +1,8 @@
 // Service worker: recebe as notificações push e trata os botões
 // "🏢 Escritório" / "🏠 Casa" SEM precisar abrir a app.
 
-const CACHE = 'presenca-v2';
-const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/core/geo.js', '/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'presenca-v3';
+const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/core/geo.js', '/core/absences.js', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

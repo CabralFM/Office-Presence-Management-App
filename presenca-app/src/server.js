@@ -9,7 +9,8 @@ import { setupPush } from './reminders/push.js';
 import { startScheduler } from './reminders/runner.js';
 import { CITY_PRESETS, listCountries, listRegions, optionalHolidaysFor, timezonesFor } from './core/holidays.js';
 import { addDays, parseSemesterId, semesterOf } from './core/dates.js';
-import { DEFAULT_OFFICE, expectedOffice, officeById, tripForDay } from './core/offices.js';
+import { DEFAULT_OFFICE, expectedOffice, officeById, tripForDay, buildHolidayMap } from './core/offices.js';
+import { ABSENCE_TYPES, ABSENCE_LABEL, validateAbsence } from './core/absences.js';
 import { holidaysFor, isWorkingDay, localNow, semesterReport } from './service.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -62,6 +63,7 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
       report,
       settings,
       days: Object.fromEntries(days),
+      absences: repo.listAbsences(sem.start, sem.end),
       holidays: Object.fromEntries([...holidays].filter(([d]) => d >= sem.start && d <= sem.end)),
       today: {
         date: now.date,
@@ -73,6 +75,7 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
       },
       meta: {
         countries: countryNames(),
+        absenceTypes: ABSENCE_TYPES,
         vapidPublicKey: push.publicKey,
         subscriptions: repo.listSubscriptions().length,
       },
@@ -83,12 +86,16 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
   app.put('/api/days/:date', (req, res) => {
     const { date } = req.params;
     if (!ISO_RE.test(date)) return res.status(400).json({ error: 'Data inválida' });
-    const { status, plan, note, officeId } = req.body || {};
+    const { status, plan, note, officeId, absenceType, justification } = req.body || {};
     const today = localNow(repo).date;
     if (officeId && !officeById(repo.getSettings(), officeId)) return res.status(400).json({ error: 'Escritório desconhecido' });
     // Não faz sentido "registrar" presença no futuro: no futuro é planejamento.
     if (status && status !== 'absence' && date > today) {
       return res.status(400).json({ error: 'Datas futuras só podem ser planejadas (use "plan").' });
+    }
+    if (status === 'absence' || plan === 'absence') {
+      const err = validateAbsence({ type: absenceType, justification });
+      if (err) return res.status(400).json({ error: err });
     }
     try {
       const saved = repo.upsertDay(date, {
@@ -98,6 +105,9 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
         source: status !== undefined ? 'manual' : undefined,
         distance: status !== undefined ? null : undefined,
         officeId: status !== undefined ? officeId || null : undefined,
+        ...(status === 'absence' || plan === 'absence'
+          ? { absenceType, justification: String(justification || '').trim() || null, absenceId: randomUUID().slice(0, 8) }
+          : {}),
       });
       res.json({ ok: true, day: saved });
     } catch (e) {
@@ -108,7 +118,8 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
   /** Resposta ao lembrete (botões da notificação, check-in por localização ou tela de início). */
   app.post('/api/checkin', (req, res) => {
     const { status, source = 'manual', distance = null, date, officeId } = req.body || {};
-    if (!['office', 'home', 'absence'].includes(status)) return res.status(400).json({ error: 'status inválido' });
+    // Ausências têm tipo e justificação → registram-se por POST /api/absences.
+    if (!['office', 'home'].includes(status)) return res.status(400).json({ error: 'status inválido (para ausências use /api/absences)' });
     const settings = repo.getSettings();
     if (officeId && !officeById(settings, officeId)) return res.status(400).json({ error: 'Escritório desconhecido' });
     const today = localNow(repo).date;
@@ -123,6 +134,48 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
       officeId: status === 'office' ? officeId || expectedOffice(settings, target).id : null,
     });
     res.json({ ok: true, date: target, day: saved });
+  });
+
+  // ---- férias e ausências ------------------------------------------------------------
+  // Registra um período (ex.: férias de 03 a 14/08, doença de 3 dias). Só os
+  // dias úteis do período (sem fins de semana nem feriados) viram ausência —
+  // são esses que saem da base dos 50%.
+  app.post('/api/absences', (req, res) => {
+    const { start, end, type, justification = '', overwrite = false, replaceId } = req.body || {};
+    if (!ISO_RE.test(start || '') || !ISO_RE.test(end || '') || end < start) return res.status(400).json({ error: 'Datas inválidas' });
+    if (addDays(start, 366) < end) return res.status(400).json({ error: 'Período longo demais (máx. 1 ano).' });
+    const err = validateAbsence({ type, justification });
+    if (err) return res.status(400).json({ error: err });
+
+    const settings = repo.getSettings();
+    const days = repo.getDays(start, end);
+    const holidays = buildHolidayMap(settings, start, end, days);
+    const targets = [];
+    for (let d = start; d <= end; d = addDays(d, 1)) {
+      const wd = new Date(d + 'T12:00:00Z').getUTCDay();
+      if (wd !== 0 && wd !== 6 && !holidays.has(d)) targets.push(d);
+    }
+    if (!targets.length) return res.status(400).json({ error: 'O período não tem dias úteis (só fins de semana/feriados).' });
+
+    // Não apaga silenciosamente dias já registrados como escritório/casa.
+    const conflicts = targets.filter((d) => {
+      const r = days.get(d);
+      return r && (r.status === 'office' || r.status === 'home') ;
+    });
+    if (conflicts.length && !overwrite) {
+      return res.status(409).json({ error: `${conflicts.length} dia(s) já registrado(s) como escritório/casa.`, conflicts });
+    }
+    if (replaceId) repo.deleteAbsence(replaceId); // edição = substitui o período anterior
+    const absenceId = randomUUID().slice(0, 8);
+    const j = String(justification).trim() || null;
+    for (const d of targets) {
+      repo.upsertDay(d, { status: 'absence', plan: null, source: 'manual', absenceType: type, justification: j, absenceId, distance: null });
+    }
+    res.json({ ok: true, id: absenceId, days: targets.length, label: ABSENCE_LABEL(type) });
+  });
+
+  app.delete('/api/absences/:id', (req, res) => {
+    res.json({ ok: true, removed: repo.deleteAbsence(req.params.id) });
   });
 
   // ---- escritórios ------------------------------------------------------------------
@@ -229,9 +282,23 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
   // ---- exportação (para enviar ao RH ou guardar backup) -----------------------------
   app.get('/api/export.csv', (_req, res) => {
     const label = { office: 'Escritório', home: 'Casa', absence: 'Ausência' };
-    const lines = ['data;situacao;planejado;origem;distancia_m;nota'];
+    const clean = (x) => String(x || '').replace(/[;\n\r]/g, ' ');
+    const offices = repo.getSettings().offices;
+    const lines = ['data;situacao;tipo_ausencia;justificacao;escritorio;planejado;origem;distancia_m;nota'];
     for (const d of repo.allDays()) {
-      lines.push([d.date, label[d.status] || '', label[d.plan] || '', d.source || '', d.distance_m ?? '', (d.note || '').replace(/[;\n]/g, ' ')].join(';'));
+      lines.push(
+        [
+          d.date,
+          label[d.status] || '',
+          d.status === 'absence' || d.plan === 'absence' ? ABSENCE_LABEL(d.absence_type) : '',
+          clean(d.justification),
+          clean(offices.find((o) => o.id === d.office_id)?.name),
+          label[d.plan] || '',
+          d.source || '',
+          d.distance_m ?? '',
+          clean(d.note),
+        ].join(';'),
+      );
     }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="presenca.csv"');
@@ -250,6 +317,7 @@ export function validateSettingsPatch(p) {
     const { officePct, maxHomeDays } = p.rules;
     if (officePct !== undefined && !(Number.isInteger(officePct) && officePct >= 0 && officePct <= 100)) e.push('percentagem deve ser 0–100');
     if (maxHomeDays !== undefined && !(Number.isInteger(maxHomeDays) && maxHomeDays >= 0 && maxHomeDays <= 200)) e.push('máximo de dias em casa inválido');
+    if (p.rules.enforceHomeCap !== undefined && typeof p.rules.enforceHomeCap !== 'boolean') e.push('enforceHomeCap deve ser verdadeiro/falso');
   }
   if (p.reminder) {
     const r = p.reminder;

@@ -26,7 +26,7 @@ button, .button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(-
 button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 button:disabled { opacity: .5; cursor: default; }
 input, select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); width: 100%; }
-input[type=checkbox] { width: auto; }
+input[type=checkbox], input[type=radio] { width: auto; margin: 0; }
 label { display: block; margin: 8px 0; font-size: 14px; color: var(--muted); }
 label > input, label > select, label > .row { margin-top: 4px; }
 label.check { display: flex; gap: 8px; align-items: center; color: var(--text); }
@@ -124,3 +124,8 @@ label.inline { display: flex; gap: 8px; align-items: center; } label.inline sele
 .list li small { color: var(--muted); }
 .list li .actions { display: flex; gap: 4px; flex-shrink: 0; }
 dialog { max-height: 92vh; overflow-y: auto; }
+textarea { font: inherit; color: inherit; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); margin-top: 4px; resize: vertical; }
+fieldset.types { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
+fieldset.types label { display: flex; gap: 8px; align-items: center; margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+fieldset.types label:has(input:checked) { outline: 2px solid var(--primary); }
+.list li .warn-txt { color: var(--warn); font-weight: 600; }

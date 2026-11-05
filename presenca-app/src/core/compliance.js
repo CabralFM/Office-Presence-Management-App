@@ -1,19 +1,21 @@
 // Motor de cumprimento da regra de presença.
 //
-// Regras (configuráveis):
-//   1. officePct   — % mínima dos dias trabalhados que têm de ser no escritório (50%).
-//   2. maxHomeDays — teto absoluto de dias em casa por semestre (60).
+// REGRA MÃE: no semestre, pelo menos `officePct` (50%) dos dias úteis
+// TRABALHÁVEIS têm de ser no escritório.
 //
-// "Dias trabalhados" (a base do cálculo) = dias úteis do semestre
-//   (seg–sex, excluindo feriados nacionais/facultativos ativos/locais)
-//   menos ausências (férias, atestado, folgas).
+//   dias úteis      = seg–sex do semestre − feriados (do local de trabalho)
+//   dias trabalháveis = dias úteis − ausências (férias, doença, licenças, folgas…)
+//   mínimo no escritório = arredondar para cima(dias trabalháveis × 50%)
 //
-// As duas regras podem não coincidir! Exemplo real, 2º semestre de 2026 no Brasil:
-//   132 dias de seg–sex − 5 feriados em dia útil = 127 dias úteis.
-//   Pela regra dos 50%: ceil(127 × 50%) = 64 dias no escritório.
-//   Pelo teto de 60 em casa: 127 − 60 = 67 dias no escritório.
-// Como a empresa exige as duas, vale a mais restritiva (67). A app mostra
-// qual das regras está valendo para não haver surpresas no fim do semestre.
+// Exemplo, 2º semestre de 2026 em Lisboa (128 dias úteis):
+//   sem ausências:                 128 trabalháveis → 64 no escritório
+//   com 10 férias + 3 doença:      115 trabalháveis → 58 no escritório (57,5 arredondado para cima)
+// Ou seja: as ausências reduzem a base, mas a percentagem mantém-se.
+//
+// Regra opcional (desligada por padrão): `enforceHomeCap` aplica também um
+// teto ABSOLUTO de `maxHomeDays` (60) em casa. Só faz diferença em semestres
+// com mais de 120 dias trabalháveis (128 − 60 = 68 > 64). Ligue-a apenas se a
+// empresa contar os 60 dias de forma rígida, além dos 50%.
 
 import { eachDay, isWeekend, mondayOf, addDays } from './dates.js';
 
@@ -24,6 +26,7 @@ const MONTH_NAMES = [
 
 export const monthName = (m) => MONTH_NAMES[m - 1];
 
+const ABSENCE_SHORT = { ferias: 'de férias', doenca: 'de doença', licenca: 'de licença', folga: 'de folga', outro: 'outra(s)', nao_especificado: 'sem tipo' };
 const fmtDM = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 const plural = (n, s, p) => `${n} ${n === 1 ? s : p}`;
 
@@ -45,20 +48,22 @@ export function classifyDays({ semester, today, days, holidays, defaultPlan }) {
     }
     const rec = days.get(date) || {};
     let kind;
+    let absenceType = null;
     if (rec.status) kind = rec.status;
     else if (rec.plan === 'absence') kind = 'absence';
     else if (date < today) kind = 'pending';
     else kind = 'open';
+    if (kind === 'absence') absenceType = rec.absenceType || 'nao_especificado';
     // defaultPlan: ex.: dias de uma viagem de trabalho contam como "planejado escritório"
     // sem precisar marcar dia a dia (e deixam de contar se apagar a viagem).
     const plan = rec.status ? null : rec.plan || (kind === 'open' ? defaultPlan?.(date) : null) || null;
-    out.push({ date, kind, plan, planned: !rec.status && rec.plan === 'absence' });
+    out.push({ date, kind, plan, planned: !rec.status && rec.plan === 'absence', absenceType, justification: rec.justification || null });
   }
   return out;
 }
 
 function emptyCounts() {
-  return { working: 0, holidays: 0, office: 0, home: 0, absence: 0, pending: 0, open: 0, plannedOffice: 0, plannedHome: 0 };
+  return { working: 0, holidays: 0, office: 0, home: 0, absence: 0, absenceByType: {}, pending: 0, open: 0, plannedOffice: 0, plannedHome: 0 };
 }
 
 function count(bucket, d) {
@@ -68,6 +73,7 @@ function count(bucket, d) {
   }
   bucket.working++;
   bucket[d.kind]++;
+  if (d.kind === 'absence') bucket.absenceByType[d.absenceType] = (bucket.absenceByType[d.absenceType] || 0) + 1;
   if (d.kind === 'open' && d.plan === 'office') bucket.plannedOffice++;
   if (d.kind === 'open' && d.plan === 'home') bucket.plannedHome++;
 }
@@ -112,7 +118,7 @@ export function computeSemester({ semester, today, days, holidays, rules, defaul
   // ---- metas do semestre --------------------------------------------------
   const base = totals.working - totals.absence; // dias efetivamente trabalhados
   const requiredByPct = Math.ceil(base * pct - 1e-9);
-  const requiredByCap = Math.max(0, base - rules.maxHomeDays);
+  const requiredByCap = rules.enforceHomeCap ? Math.max(0, base - rules.maxHomeDays) : 0;
   const requiredOffice = Math.max(requiredByPct, requiredByCap);
   const bindingRule = requiredByCap > requiredByPct ? 'teto' : 'percentual';
   const maxHome = base - requiredOffice;
@@ -203,6 +209,10 @@ export function computeSemester({ semester, today, days, holidays, rules, defaul
     status,
     plan,
     pendingDates: classified.filter((d) => d.kind === 'pending').map((d) => d.date),
+    // Ausências de tipo que exige justificação e que ficaram sem ela
+    unjustifiedAbsences: classified
+      .filter((d) => d.kind === 'absence' && d.absenceType !== 'ferias' && !d.justification)
+      .map((d) => d.date),
     weeks,
     months,
   };
@@ -226,6 +236,11 @@ export function buildAlerts(r) {
   if (r.pendingDates.length) {
     const list = r.pendingDates.slice(0, 5).map(fmtDM).join(', ');
     add('warn', `${plural(r.pendingDates.length, 'dia útil sem registro', 'dias úteis sem registro')}: ${list}${r.pendingDates.length > 5 ? '…' : ''}. Preencha para os cálculos ficarem corretos.`);
+  }
+
+  if (r.unjustifiedAbsences.length) {
+    const list = r.unjustifiedAbsences.slice(0, 5).map(fmtDM).join(', ');
+    add('warn', `${plural(r.unjustifiedAbsences.length, 'ausência sem justificação', 'ausências sem justificação')} (ou sem tipo): ${list}${r.unjustifiedAbsences.length > 5 ? '…' : ''}. Complete em Planejamento → Férias e ausências.`);
   }
 
   // Meses fechados abaixo da percentagem
@@ -258,9 +273,9 @@ export function buildAlerts(r) {
     add('info', `Planejamento de ${next.name}: ${next.recommendedOffice} de ${next.open} dias úteis no escritório para manter o semestre em dia.`);
   }
 
-  // Teto de home office
+  // Dias de casa ainda possíveis sem quebrar a regra
   if (r.homeLeft < 0) {
-    add('danger', `Você ultrapassou o limite de home office do semestre em ${-r.homeLeft} dia(s).`);
+    add('danger', `Você já tem ${-r.homeLeft} dia(s) de casa a mais do que a regra permite neste semestre.`);
   } else if (r.homeLeft <= 10 && r.totals.undecided > 0) {
     add('warn', `Restam apenas ${plural(r.homeLeft, 'dia', 'dias')} de home office neste semestre.`);
   }
@@ -271,6 +286,15 @@ export function buildAlerts(r) {
 
   if (r.bindingRule === 'teto') {
     add('info', `Neste semestre o teto de ${r.rules.maxHomeDays} dias em casa é mais exigente do que os ${pctTxt}: precisa de ${r.requiredOffice} dias no escritório (e não ${r.requiredByPct}).`);
+  }
+
+  // Resumo das ausências: mostra como a base foi reduzida
+  if (r.totals.absence > 0) {
+    const parts = Object.entries(r.totals.absenceByType).map(([t, n]) => `${n} ${ABSENCE_SHORT[t] || 'outra(s)'}`);
+    add(
+      'info',
+      `Ausências no semestre: ${parts.join(', ')}. Base: ${r.totals.working} dias úteis − ${r.totals.absence} = ${r.totals.base} dias trabalháveis → mínimo ${r.requiredOffice} no escritório (${pctTxt}).`,
+    );
   }
 
   if (r.status === 'cumprido') add('ok', `Meta do semestre cumprida: ${r.totals.office} dias no escritório (mínimo ${r.requiredOffice}).`);

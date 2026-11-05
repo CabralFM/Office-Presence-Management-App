@@ -4,7 +4,8 @@ import { allocate, computeSemester } from '../src/core/compliance.js';
 import { holidayMap } from '../src/core/holidays.js';
 import { eachDay, isWeekend, semester } from '../src/core/dates.js';
 
-const rules = { officePct: 50, maxHomeDays: 60 };
+const rules = { officePct: 50, maxHomeDays: 60, enforceHomeCap: false };
+const rulesWithCap = { ...rules, enforceHomeCap: true };
 const S2 = semester(2026, 2);
 const hol = holidayMap({ country: 'BR', optionalHolidays: { carnaval: true, corpusChristi: true } }, [2026]);
 
@@ -19,15 +20,22 @@ function fill(start, end, pattern) {
   return days;
 }
 
-test('2º semestre 2026 (BR): 127 dias úteis e o teto de 60 é a regra que manda', () => {
+test('regra mãe: 50% de 127 dias úteis = 64 no escritório (até 63 em casa)', () => {
   const r = computeSemester({ semester: S2, today: '2026-07-01', days: new Map(), holidays: hol, rules });
   assert.equal(r.totals.working, 127);
+  assert.equal(r.requiredOffice, 64);
+  assert.equal(r.bindingRule, 'percentual');
+  assert.equal(r.maxHome, 63);
+  assert.equal(r.status, 'ok');
+});
+
+test('teto absoluto opcional: ligado, 127 − 60 = 67 no escritório', () => {
+  const r = computeSemester({ semester: S2, today: '2026-07-01', days: new Map(), holidays: hol, rules: rulesWithCap });
   assert.equal(r.requiredByPct, 64);
   assert.equal(r.requiredByCap, 67);
   assert.equal(r.requiredOffice, 67);
   assert.equal(r.bindingRule, 'teto');
   assert.equal(r.maxHome, 60);
-  assert.equal(r.status, 'ok');
 });
 
 test('Férias reduzem a base: 10 dias de férias → 117 dias, 59 no escritório', () => {
@@ -85,5 +93,45 @@ test('Planejamento: projeção considera dias planejados', () => {
   const r = computeSemester({ semester: S2, today: '2026-07-01', days, holidays: hol, rules });
   assert.equal(r.plan.officeWithPlan, 1);
   assert.equal(r.plan.homeWithPlan, 1);
-  assert.equal(r.plan.neededAfterPlan, 66);
+  assert.equal(r.plan.neededAfterPlan, 63); // 64 − 1 planejado
+});
+
+test('férias + doença saem da base e os 50% aplicam-se ao que sobra', () => {
+  const days = new Map();
+  // 10 dias úteis de férias em agosto
+  for (const d of ['2026-08-03', '2026-08-04', '2026-08-05', '2026-08-06', '2026-08-07', '2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14']) {
+    days.set(d, { status: 'absence', absenceType: 'ferias' });
+  }
+  // 3 dias de doença com atestado
+  for (const d of ['2026-09-21', '2026-09-22', '2026-09-23']) days.set(d, { status: 'absence', absenceType: 'doenca', justification: 'Atestado médico nº 123' });
+  const r = computeSemester({ semester: S2, today: '2026-10-01', days, holidays: hol, rules });
+  assert.equal(r.totals.absence, 13);
+  assert.deepEqual(r.totals.absenceByType, { ferias: 10, doenca: 3 });
+  assert.equal(r.totals.base, 114);
+  assert.equal(r.requiredOffice, 57); // 50% de 114
+  assert.equal(r.maxHome, 57);
+  assert.equal(r.unjustifiedAbsences.length, 0);
+  assert.ok(r.alerts.some((a) => /127 dias úteis − 13 = 114 dias trabalháveis → mínimo 57/.test(a.text)));
+});
+
+test('ausência sem justificação (ou sem tipo) gera aviso; férias não precisam', () => {
+  const days = new Map([
+    ['2026-07-06', { status: 'absence', absenceType: 'doenca' }],
+    ['2026-07-07', { status: 'absence' }], // registro antigo, sem tipo
+    ['2026-07-08', { status: 'absence', absenceType: 'ferias' }],
+  ]);
+  const r = computeSemester({ semester: S2, today: '2026-07-10', days, holidays: hol, rules });
+  assert.deepEqual(r.unjustifiedAbsences, ['2026-07-06', '2026-07-07']);
+  assert.ok(r.alerts.some((a) => /2 ausências sem justificação/.test(a.text)));
+});
+
+test('mesmo com ausências, a regra é cumprida só com 50% dos dias trabalhados', () => {
+  // Julho–dezembro: alterna escritório/casa, com 5 dias de doença no meio
+  const days = fill('2026-07-01', '2026-12-31', (d, i) => (i % 2 === 0 ? 'office' : 'home'));
+  for (const d of ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09']) days.set(d, { status: 'absence', absenceType: 'doenca', justification: 'atestado' });
+  const r = computeSemester({ semester: S2, today: '2026-12-31', days, holidays: hol, rules });
+  assert.equal(r.totals.base, 122);
+  assert.equal(r.requiredOffice, 61);
+  assert.ok(r.totals.office >= 61, `office=${r.totals.office}`);
+  assert.equal(r.status, 'cumprido');
 });

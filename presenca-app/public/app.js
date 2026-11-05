@@ -4,6 +4,7 @@
 // "render a partir do estado": cada ação chama a API e volta a desenhar.
 
 import { nearestOffice } from '/core/geo.js';
+import { ABSENCE_TYPES, ABSENCE_LABEL, ABSENCE_ICON } from '/core/absences.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -20,6 +21,9 @@ const fmtLong = (iso) => {
   const d = new Date(iso + 'T12:00:00Z');
   return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', timeZone: 'UTC' });
 };
+// Ícone do dia: nas ausências, o do tipo (🌴 férias, 🤒 doença…)
+const dayIcon = (rec) => (rec?.status === 'absence' ? ABSENCE_ICON(rec.absenceType) : ICON[rec?.status] || '');
+const dayLabel = (rec) => (rec?.status === 'absence' ? ABSENCE_LABEL(rec.absenceType) : LABEL[rec?.status] || '');
 const pct = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
 
 let S = null; // último estado vindo do servidor
@@ -137,7 +141,7 @@ function renderToday() {
   el.innerHTML = `${head}
     <p class="hint">${
       cur
-        ? `Registrado: <b>${ICON[cur]} ${LABEL[cur]}${cur === 'office' && multiOffice() ? ` · ${h(officeName(rec.officeId))}` : ''}</b>${rec.source === 'localizacao' ? ` (pela localização, a ${fmtDist(rec.distance)})` : ''}. Pode alterar abaixo.`
+        ? `Registrado: <b>${dayIcon(rec)} ${dayLabel(rec)}${cur === 'office' && multiOffice() ? ` · ${h(officeName(rec.officeId))}` : ''}</b>${rec.source === 'localizacao' ? ` (pela localização, a ${fmtDist(rec.distance)})` : ''}${cur === 'absence' ? ` — ${rec.justification ? h(rec.justification) : 'sem justificação'}` : ''}. Pode alterar abaixo.`
         : 'Onde você está trabalhando hoje?'
     }</p>
     <div class="choice">
@@ -147,7 +151,11 @@ function renderToday() {
     ${canGeo && !cur ? `<button id="geo-check">📍 Verificar pela localização</button>` : ''}
     <div id="geo-box"></div>`;
   $$('[data-checkin]', el).forEach((b) =>
-    b.addEventListener('click', () => checkin(b.dataset.checkin, 'manual', null, b.dataset.checkin === 'office' ? $('#office-pick')?.value : undefined)),
+    b.addEventListener('click', () =>
+      b.dataset.checkin === 'absence'
+        ? openAbsence({ start: t.date, end: t.date, ...(cur === 'absence' ? absenceOf(t.date) : {}) })
+        : checkin(b.dataset.checkin, 'manual', null, b.dataset.checkin === 'office' ? $('#office-pick')?.value : undefined),
+    ),
   );
   // Trocar o escritório depois de já ter registrado "Escritório" corrige o registro.
   $('#office-pick')?.addEventListener('change', (e) => cur === 'office' && checkin('office', 'manual', null, e.target.value));
@@ -287,9 +295,13 @@ function renderSemester() {
     <h3>${h(r.semester.label)} <span class="badge ${r.status}">${STATUS_TXT[r.status]}</span></h3>
     <div class="bar" title="Escritório: feitos + planejados"><i class="plan" style="width:${planPct}%"></i><i style="width:${donePct}%"></i></div>
     <p class="hint">${t.office} de ${r.requiredOffice} dias obrigatórios no escritório${r.plan.officeWithPlan > t.office ? ` (+${r.plan.officeWithPlan - t.office} planejados)` : ''}.
-      Regra que vale: <b>${r.bindingRule === 'teto' ? `teto de ${r.rules.maxHomeDays} dias em casa` : `${r.rules.officePct}% no escritório`}</b>.</p>
+      Regra: <b>${r.rules.officePct}% de ${t.base} dias trabalháveis = ${r.requiredByPct}</b>${
+        r.bindingRule === 'teto' ? ` — mas o teto de ${r.rules.maxHomeDays} dias em casa (ativo) exige <b>${r.requiredOffice}</b>` : ''
+      }.</p>
     <div class="stats">
-      <div class="stat"><b>${t.base}</b><span>dias trabalhados no semestre (${t.working} úteis − ${t.absence} ausências)</span></div>
+      <div class="stat"><b>${t.base}</b><span>dias trabalháveis = ${t.working} úteis − ${t.absence} ausência(s)${
+        t.absence ? ` (${Object.entries(t.absenceByType).map(([k, n]) => `${ABSENCE_ICON(k)} ${n}`).join(' ')})` : ''
+      }</span></div>
       <div class="stat"><b>${r.officeNeeded}</b><span>dias de escritório que faltam</span></div>
       <div class="stat"><b>${Math.max(0, r.homeLeft)}</b><span>dias de casa ainda disponíveis (de ${r.maxHome})</span></div>
       <div class="stat"><b>${t.undecided}</b><span>dias úteis por decidir${t.pending ? ` (${t.pending} sem registro)` : ''}</span></div>
@@ -354,8 +366,13 @@ function renderCalendar() {
     for (let d = 1; d <= days; d++) {
       const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const { hol, rec, trip } = dayInfo(iso);
-      const title = [hol && `${hol.name} (${hol.officeName})`, trip && `Viagem: ${officeName(trip.officeId)}`, rec.note].filter(Boolean).join(' · ');
-      cells += `<button class="${dayClasses(iso)}" data-day="${iso}" title="${h(title)}">${trip ? '<span class="trip">✈️</span>' : ''}${d}${rec.status ? `<small>${ICON[rec.status]}</small>` : ''}</button>`;
+      const title = [
+        hol && `${hol.name} (${hol.officeName})`,
+        rec.status === 'absence' && `${dayLabel(rec)}${rec.justification ? `: ${rec.justification}` : ' (sem justificação)'}`,
+        trip && `Viagem: ${officeName(trip.officeId)}`,
+        rec.note,
+      ].filter(Boolean).join(' · ');
+      cells += `<button class="${dayClasses(iso)}" data-day="${iso}" title="${h(title)}">${trip ? '<span class="trip">✈️</span>' : ''}${d}${rec.status ? `<small>${dayIcon(rec)}</small>` : ''}</button>`;
     }
     html += `<div class="month"><h3>${first.toLocaleDateString('pt-BR', { month: 'long', timeZone: 'UTC' })}
       <small>${mi ? `🏢 ${mi.office} · 🏠 ${mi.home} · ${pct(mi.officePct)}` : ''}</small></h3><div class="cal">${cells}</div></div>`;
@@ -385,7 +402,7 @@ function openDay(date) {
   $('#dd-sub').textContent = future
     ? 'Dia futuro: planeje onde vai trabalhar (ou marque férias/folga).'
     : rec.status
-      ? `Registrado: ${LABEL[rec.status]}${rec.source ? ` (${rec.source})` : ''}`
+      ? `Registrado: ${dayLabel(rec)}${rec.status === 'absence' ? (rec.justification ? ` — ${rec.justification}` : ' — sem justificação') : rec.source ? ` (${rec.source})` : ''}`
       : 'Sem registro — onde trabalhou?';
   const trip = tripFor(date);
   if (trip) $('#dd-sub').textContent += ` ✈️ Viagem: ${officeName(trip.officeId)}.`;
@@ -399,11 +416,18 @@ function openDay(date) {
   }
   const cur = rec[field];
   $('#dd-buttons').innerHTML =
-    ['office', 'home', 'absence'].map((s) => `<button type="button" class="${s} ${cur === s ? 'sel' : ''}" data-v="${s}">${ICON[s]} ${future ? 'Planejar ' : ''}${LABEL[s]}</button>`).join('') +
+    ['office', 'home'].map((s) => `<button type="button" class="${s} ${cur === s ? 'sel' : ''}" data-v="${s}">${ICON[s]} ${future ? 'Planejar ' : ''}${LABEL[s]}</button>`).join('') +
+    `<button type="button" class="absence ${rec.status === 'absence' ? 'sel' : ''}" data-v="absence">${rec.status === 'absence' ? `${dayIcon(rec)} Editar ausência` : '🌴 Férias / ausência'}</button>` +
     `<button type="button" data-v="">Limpar</button>`;
   $('#dd-note').value = rec.note || '';
   $$('#dd-buttons button').forEach((b) =>
     b.addEventListener('click', async () => {
+      if (b.dataset.v === 'absence') {
+        // Ausência tem tipo, período e justificação → diálogo próprio.
+        dlg.close();
+        openAbsence({ start: date, end: date, ...(rec.status === 'absence' ? absenceOf(date) : {}) });
+        return;
+      }
       const body = { [field]: b.dataset.v || null, note: $('#dd-note').value || null };
       if (showOffice && b.dataset.v === 'office') body.officeId = $('#dd-office').value;
       await api(`/api/days/${date}`, { method: 'PUT', body });
@@ -428,6 +452,7 @@ function renderPlanning() {
     <div class="row"><button id="auto-plan">✨ Sugerir plano automático para as próximas 4 semanas</button></div>`;
   $('#auto-plan').onclick = autoPlan;
   renderTrips();
+  renderAbsences();
 
   const weeks = r.weeks.filter((w) => !w.isPast);
   $('#weeks').innerHTML =
@@ -439,7 +464,7 @@ function renderPlanning() {
           const { hol, rec, plan, trip, future, today } = dayInfo(d);
           const disabled = !inSem || hol || (!future && !today) || rec.status;
           const cls = rec.status || (plan ? `plan-${plan}` : '');
-          const lbl = hol ? '🎉' : rec.status ? ICON[rec.status] : plan ? ICON[plan] + (trip ? '✈️' : '') : '·';
+          const lbl = hol ? '🎉' : rec.status ? dayIcon(rec) : plan ? ICON[plan] + (trip ? '✈️' : '') : '·';
           return `<button data-plan="${d}" class="${cls}" ${disabled ? 'disabled' : ''} title="${h(hol?.name || '')}">${DOW[i + 1]} ${fmtDM(d)}<br>${lbl}</button>`;
         });
         const planned = w.plannedOffice + w.office;
@@ -451,6 +476,101 @@ function renderPlanning() {
       .join('') || '<p class="hint">Semestre encerrado.</p>';
   $$('#weeks [data-plan]').forEach((b) => b.addEventListener('click', () => cyclePlan(b.dataset.plan)));
 }
+
+// ---------------------------------------------------------------- férias e ausências
+const absenceOf = (date) => {
+  const a = S.absences.find((x) => x.start <= date && date <= x.end);
+  return a ? { id: a.id, type: a.type, justification: a.justification, start: a.start, end: a.end } : {};
+};
+
+function renderAbsences() {
+  $('#absences').innerHTML =
+    S.absences
+      .map((a) => {
+        const missing = a.type === 'nao_especificado' || (ABSENCE_TYPES[a.type]?.justificationRequired && !a.justification);
+        const period = a.start === a.end ? `${fmtDM(a.start)}` : `${fmtDM(a.start)} – ${fmtDM(a.end)}`;
+        return `<li><span>${ABSENCE_ICON(a.type)} <b>${h(ABSENCE_LABEL(a.type))}</b> · ${period} · ${a.days} dia(s) útil(eis)<br>
+          <small>${a.justification ? h(a.justification) : missing ? '<span class="warn-txt">⚠️ falta justificação / tipo</span>' : 'sem justificação'}</small></span>
+          <span class="actions"><button type="button" data-ab-edit="${a.id}">Editar</button><button type="button" data-ab-del="${a.id}" title="Remover">✖</button></span></li>`;
+      })
+      .join('') || '<li class="hint">Nenhuma ausência neste semestre.</li>';
+  $$('[data-ab-edit]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const a = S.absences.find((x) => x.id === b.dataset.abEdit);
+      openAbsence({ id: a.id, type: a.type, justification: a.justification, start: a.start, end: a.end });
+    }),
+  );
+  $$('[data-ab-del]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Remover esta ausência? Os dias voltam a ficar sem registro.')) return;
+      await api(`/api/absences/${b.dataset.abDel}`, { method: 'DELETE' });
+      toast('Ausência removida');
+      await load();
+    }),
+  );
+}
+
+let absenceEditId = null;
+function openAbsence({ id = null, type = 'ferias', justification = '', start = S.now.date, end } = {}) {
+  absenceEditId = id;
+  const f = $('#absence-form');
+  $('#ab-title').textContent = id ? 'Editar ausência' : 'Registrar férias / ausência';
+  $('#ab-types').innerHTML =
+    '<legend>Tipo</legend>' +
+    Object.entries(ABSENCE_TYPES)
+      .map(([k, t]) => `<label><input type="radio" name="type" value="${k}" ${k === type ? 'checked' : ''}/> ${t.icon} ${h(t.label)}</label>`)
+      .join('');
+  if (!ABSENCE_TYPES[type]) f.querySelector('input[name=type]').checked = true; // registros antigos sem tipo
+  f.start.value = start;
+  f.end.value = end || start;
+  f.justification.value = justification || '';
+  $('#ab-error').textContent = '';
+  updateAbsenceHint();
+  $$('input[name=type]', f).forEach((r) => r.addEventListener('change', updateAbsenceHint));
+  $('#absence-dialog').showModal();
+}
+
+function updateAbsenceHint() {
+  const f = $('#absence-form');
+  const t = ABSENCE_TYPES[f.querySelector('input[name=type]:checked').value];
+  $('#ab-just-label').textContent = t.justificationRequired ? 'Justificação (obrigatória)' : 'Justificação (opcional)';
+  f.justification.required = t.justificationRequired;
+  f.justification.placeholder = t.hint;
+  $('#ab-hint').textContent = t.hint;
+}
+
+$('#absence-form').start.addEventListener('change', (e) => {
+  const f = e.target.form;
+  if (!f.end.value || f.end.value < f.start.value) f.end.value = f.start.value;
+});
+
+async function saveAbsence(overwrite = false) {
+  const f = $('#absence-form');
+  const body = {
+    type: f.querySelector('input[name=type]:checked').value,
+    start: f.start.value,
+    end: f.end.value,
+    justification: f.justification.value.trim(),
+    replaceId: absenceEditId,
+    overwrite,
+  };
+  const res = await fetch('/api/absences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 409) {
+    const list = data.conflicts.slice(0, 6).map(fmtDM).join(', ');
+    if (confirm(`${data.error} (${list}${data.conflicts.length > 6 ? '…' : ''}). Substituir por ausência?`)) return saveAbsence(true);
+    return;
+  }
+  if (!res.ok) {
+    $('#ab-error').textContent = data.error || `Erro ${res.status}`;
+    return;
+  }
+  $('#absence-dialog').close();
+  toast(`${data.label}: ${data.days} dia(s) útil(eis) registrado(s)`);
+  await load();
+}
+$('#ab-save').addEventListener('click', () => saveAbsence());
+$('#absence-add').addEventListener('click', () => openAbsence());
 
 function renderTrips() {
   const f = $('#trip-form');
@@ -531,6 +651,8 @@ function renderSettings() {
   const f = $('#settings-form');
   f.officePct.value = s.rules.officePct;
   f.maxHomeDays.value = s.rules.maxHomeDays;
+  f.enforceHomeCap.checked = Boolean(s.rules.enforceHomeCap);
+  f.maxHomeDays.disabled = !f.enforceHomeCap.checked;
   f.reminderEnabled.checked = s.reminder.enabled;
   f.reminderTime.value = s.reminder.time;
   f.repeatMinutes.value = s.reminder.repeatMinutes;
@@ -747,12 +869,13 @@ $('#of-save').addEventListener('click', async () => {
 });
 
 $('#office-add').addEventListener('click', () => openOffice(null));
+$('#settings-form').enforceHomeCap.addEventListener('change', (e) => (e.target.form.maxHomeDays.disabled = !e.target.checked));
 
 $('#settings-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
   const patch = {
-    rules: { officePct: Number(f.officePct.value), maxHomeDays: Number(f.maxHomeDays.value) },
+    rules: { officePct: Number(f.officePct.value), maxHomeDays: Number(f.maxHomeDays.value), enforceHomeCap: f.enforceHomeCap.checked },
     reminder: {
       enabled: f.reminderEnabled.checked,
       time: f.reminderTime.value,

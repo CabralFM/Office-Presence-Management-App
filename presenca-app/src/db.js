@@ -15,7 +15,9 @@ export const DEFAULT_SETTINGS = {
   primaryOfficeId: null,
   // Viagens de trabalho: [{ id, officeId, start, end, note }]
   trips: [],
-  rules: { officePct: 50, maxHomeDays: 60 },
+  // Regra mãe: officePct dos dias trabalháveis. O teto absoluto de dias em casa
+  // é opcional (enforceHomeCap) — ver src/core/compliance.js.
+  rules: { officePct: 50, maxHomeDays: 60, enforceHomeCap: false },
   reminder: {
     enabled: true,
     time: '09:00',
@@ -63,9 +65,15 @@ export function openDb(file) {
     CREATE TABLE IF NOT EXISTS sent_log (key TEXT PRIMARY KEY, sent_at TEXT NOT NULL);
   `);
 
-  // Migração: escritório em que o dia foi trabalhado (versões antigas não tinham).
-  if (!db.prepare('PRAGMA table_info(days)').all().some((c) => c.name === 'office_id')) {
-    db.exec('ALTER TABLE days ADD COLUMN office_id TEXT');
+  // Migrações: colunas acrescentadas em versões posteriores.
+  const cols = new Set(db.prepare('PRAGMA table_info(days)').all().map((c) => c.name));
+  for (const [name, type] of [
+    ['office_id', 'TEXT'], //      escritório em que o dia foi trabalhado
+    ['absence_type', 'TEXT'], //   ferias | doenca | licenca | folga | outro
+    ['justification', 'TEXT'], //  justificação da ausência
+    ['absence_id', 'TEXT'], //     agrupa os dias de um mesmo período (ex.: 2 semanas de férias)
+  ]) {
+    if (!cols.has(name)) db.exec(`ALTER TABLE days ADD COLUMN ${name} ${type}`);
   }
 
   const kvGet = db.prepare('SELECT value FROM kv WHERE key = ?');
@@ -95,7 +103,20 @@ export function openDb(file) {
     getDays(start, end) {
       const rows = db.prepare('SELECT * FROM days WHERE date BETWEEN ? AND ? ORDER BY date').all(start, end);
       return new Map(
-        rows.map((r) => [r.date, { status: r.status, plan: r.plan, source: r.source, note: r.note, distance: r.distance_m, officeId: r.office_id }]),
+        rows.map((r) => [
+          r.date,
+          {
+            status: r.status,
+            plan: r.plan,
+            source: r.source,
+            note: r.note,
+            distance: r.distance_m,
+            officeId: r.office_id,
+            absenceType: r.absence_type,
+            justification: r.justification,
+            absenceId: r.absence_id,
+          },
+        ]),
       );
     },
     getDay(date) {
@@ -103,7 +124,7 @@ export function openDb(file) {
     },
 
     /** Grava/atualiza um dia. Campos ausentes mantêm o valor anterior; null apaga. */
-    upsertDay(date, { status, plan, source, note, distance, officeId }) {
+    upsertDay(date, { status, plan, source, note, distance, officeId, absenceType, justification, absenceId }) {
       if (status != null && !VALID_STATUS.has(status)) throw new Error('status inválido');
       if (plan != null && !VALID_STATUS.has(plan)) throw new Error('plan inválido');
       const prev = repo.getDay(date) || {};
@@ -114,19 +135,63 @@ export function openDb(file) {
         note: note === undefined ? prev.note ?? null : note,
         distance: distance === undefined ? prev.distance ?? null : distance,
         officeId: officeId === undefined ? prev.officeId ?? null : officeId,
+        absenceType: absenceType === undefined ? prev.absenceType ?? null : absenceType,
+        justification: justification === undefined ? prev.justification ?? null : justification,
+        absenceId: absenceId === undefined ? prev.absenceId ?? null : absenceId,
       };
-      // O escritório só faz sentido em dias de escritório.
+      // O escritório só faz sentido em dias de escritório; tipo/justificação só em ausências.
       if (next.status !== 'office') next.officeId = null;
+      if (next.status !== 'absence' && next.plan !== 'absence') {
+        next.absenceType = next.justification = next.absenceId = null;
+      }
       if (!next.status && !next.plan && !next.note) {
         db.prepare('DELETE FROM days WHERE date = ?').run(date);
         return null;
       }
       db.prepare(
-        `INSERT INTO days (date, status, plan, source, note, distance_m, office_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO days (date, status, plan, source, note, distance_m, office_id, absence_type, justification, absence_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(date) DO UPDATE SET status=excluded.status, plan=excluded.plan, source=excluded.source,
-           note=excluded.note, distance_m=excluded.distance_m, office_id=excluded.office_id, updated_at=excluded.updated_at`,
-      ).run(date, next.status, next.plan, next.source, next.note, next.distance, next.officeId, new Date().toISOString());
+           note=excluded.note, distance_m=excluded.distance_m, office_id=excluded.office_id,
+           absence_type=excluded.absence_type, justification=excluded.justification, absence_id=excluded.absence_id,
+           updated_at=excluded.updated_at`,
+      ).run(
+        date, next.status, next.plan, next.source, next.note, next.distance, next.officeId,
+        next.absenceType, next.justification, next.absenceId, new Date().toISOString(),
+      );
       return next;
+    },
+
+    /**
+     * Períodos de ausência no intervalo, agrupados (dias com o mesmo absence_id;
+     * registros antigos sem id viram períodos de 1 dia).
+     */
+    listAbsences(start, end) {
+      const rows = db
+        .prepare(`SELECT date, absence_type, justification, absence_id FROM days
+                  WHERE date BETWEEN ? AND ? AND (status = 'absence' OR (status IS NULL AND plan = 'absence')) ORDER BY date`)
+        .all(start, end);
+      const groups = new Map();
+      for (const r of rows) {
+        const id = r.absence_id || `dia-${r.date}`;
+        if (!groups.has(id)) groups.set(id, { id, type: r.absence_type || 'nao_especificado', justification: r.justification || '', start: r.date, end: r.date, days: 0 });
+        const g = groups.get(id);
+        g.end = r.date;
+        g.days++;
+      }
+      return [...groups.values()];
+    },
+
+    /** Remove um período de ausência (os dias voltam a "sem registro"). */
+    deleteAbsence(id) {
+      const rows = id.startsWith('dia-')
+        ? db.prepare(`SELECT date FROM days WHERE date = ? AND absence_id IS NULL`).all(id.slice(4))
+        : db.prepare('SELECT date FROM days WHERE absence_id = ?').all(id);
+      for (const { date } of rows) {
+        const prev = repo.getDay(date);
+        repo.upsertDay(date, { status: prev.status === 'absence' ? null : prev.status, plan: prev.plan === 'absence' ? null : prev.plan });
+      }
+      return rows.length;
     },
 
     allDays() {

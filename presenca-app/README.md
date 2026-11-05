@@ -2,8 +2,9 @@
 
 Aplicação web (PWA) para controlar os dias em que você trabalha **no escritório** e **em casa**, e garantir a regra da empresa:
 
-- **≥ 50% dos dias trabalhados no escritório**, medido por **semestre** (jan–jun e jul–dez);
-- **máximo de 60 dias em home office por semestre**;
+- **regra mãe: ≥ 50% dos dias úteis trabalháveis do semestre no escritório** (jan–jun e jul–dez);
+- férias, doença e outras ausências **saem da base** (com tipo e justificação), e os 50% aplicam-se ao que sobra;
+- o "máximo de 60 dias em casa" é tratado como o equivalente aos 50% — opcionalmente pode ser aplicado como teto rígido;
 - considerando os **feriados do local de trabalho** (nacionais, regionais, municipais e pontos facultativos) — inclusive quando você trabalha num escritório da empresa **em outro país**.
 
 ## O que a aplicação faz
@@ -13,7 +14,7 @@ Aplicação web (PWA) para controlar os dias em que você trabalha **no escritó
 | **Registro diário** | Botões 🏢 Escritório / 🏠 Casa / 🌴 Ausência no painel, ou toque em qualquer dia no calendário. |
 | **Lembrete até responder** | Notificação push às 09:00 (configurável), de seg a sex, **repetida a cada 30 min até você responder** (ou até às 18:00). A notificação tem botões: você responde sem abrir a app. Não dispara em feriados nem em dias já respondidos. |
 | **Check-in por localização (opcional)** | Você define o endereço do escritório e uma janela (ex.: 09:00–10:30). Dentro da janela, ao tocar no lembrete/abrir a app, a localização é lida **uma única vez**, a distância é calculada **no seu aparelho** e a app pergunta: *"Você está a 120 m do escritório. Confirma que está no escritório?"*. As coordenadas não são enviadas ao servidor; fora da janela ou depois de responder, a localização não é usada. |
-| **Regra dos 50% + teto de 60 dias** | Calcula as duas metas e aplica a **mais exigente** (ver exemplo abaixo). |
+| **Regra dos 50%** | Mínimo no escritório = 50% dos dias trabalháveis (arredondado para cima). Teto absoluto de dias em casa: opcional, desligado por padrão (ver abaixo). |
 | **Avisos antecipados** | "Outubro fechou com 38% (abaixo de 50%)", "Para novembro cumprir a cota, vá mais 10 dos 17 dias úteis; para recuperar o atraso o ideal são 12", "Restam apenas 8 dias de home office", "Há 2 dias sem registro". |
 | **Planejamento** | Distribui os dias de escritório que faltam pelas semanas/meses restantes (semanas com feriado pedem menos). Botão "Sugerir plano automático" preenche as próximas 4 semanas, preferindo ter–qui. |
 | **Resumos** | Push no 1º dia útil da semana (recomendação da semana) e no 1º dia útil do mês (resultado do mês anterior + meta do mês). |
@@ -21,7 +22,7 @@ Aplicação web (PWA) para controlar os dias em que você trabalha **no escritó
 | **Feriados por local de trabalho** | Cada dia usa o calendário do escritório onde você trabalha nesse dia. Brasil e Portugal: cálculo próprio (inclui móveis e facultativos). Outros ~200 países e regiões: biblioteca `date-holidays`, offline. Municipais: editáveis, com modelos (Lisboa, Almada, Porto, Seixal, Sintra, Madrid, São Paulo…). Aba Calendário → "Feriados do semestre" mostra cada feriado e de que escritório vem. |
 | **Viagens de trabalho** | Registre "Madrid, 08 a 12/06": nesses dias valem os feriados **e o fuso** de Madrid, os dias úteis contam como "planejado escritório" e o lembrete chega às 9h locais. |
 | **Perguntar quando muda o local** | (1) Se o fuso do aparelho for diferente do escritório previsto, a app pergunta *"Você está trabalhando em outro local?"* e pré-preenche a viagem. (2) Ao registrar "Escritório" escolhe-se em qual. (3) O check-in por localização reconhece **qual** escritório está mais perto e avisa se não for o previsto. (4) O resumo semanal pergunta se vai trabalhar em outro escritório. |
-| **Férias/ausências** | Marcar "Ausência" (passado) ou planejar "Ausência" (futuro) **retira o dia da base** — as metas são recalculadas. |
+| **Férias e ausências** | Tipos: 🌴 Férias, 🤒 Doença, 📄 Licença (parental, casamento, luto…), 🛌 Folga/compensação, 📝 Outra. Registra-se um **período** (ex.: 03 a 14/08) e só os dias úteis contam. **Justificação obrigatória** em todos menos férias (ex.: "Atestado médico nº 4521"). A app avisa ausências sem justificação, não apaga dias já registrados como escritório/casa sem confirmação, e permite editar/remover o período. A justificação vai no CSV exportado. |
 | **Exportar** | CSV com todos os registros (para conferência com o RH ou backup). |
 
 ## Feriados: de onde vêm, em cada dia
@@ -44,24 +45,31 @@ Exemplo (mora em Almada, trabalha em Lisboa, viaja a Madrid):
 
 Num dia de home office em Almada vale o calendário de Lisboa, porque é lá o seu local de trabalho.
 
-## As regras, com números reais
+## A regra mãe, com números reais
 
-**2º semestre de 2026, Brasil (sem feriados municipais):**
+**Mínimo no escritório = 50% dos dias úteis trabalháveis do semestre**, arredondado para cima.
 
 ```
-Dias de seg a sex (jul–dez)                    132
-− feriados em dia útil: 07/09, 12/10, 02/11,
-  20/11 (Consciência Negra), 25/12              −5
-= dias úteis                                   127
-
-Regra 1 — 50% no escritório:  ceil(127 × 0,5) = 64 dias
-Regra 2 — máx. 60 em casa:    127 − 60        = 67 dias
-Meta efetiva (a mais exigente):                 67 dias no escritório
+dias úteis         = seg–sex do semestre − feriados do local de trabalho
+dias trabalháveis  = dias úteis − ausências (férias, doença, licenças, folgas…)
+mínimo escritório  = ⌈ dias trabalháveis × 50% ⌉
 ```
 
-Ou seja: os "60 dias = 50%" só batem exatamente num semestre de 120 dias úteis. Num semestre de 127, o teto de 60 dias em casa exige **3 dias a mais** no escritório do que os 50%. A app mostra no painel qual regra está valendo. Se tirar 10 dias de férias, a base cai para 117 e a meta passa a 59 (aí vale a regra dos 50%).
+**2º semestre de 2026, escritório em Lisboa:**
 
-> Se a sua empresa interpretar a regra de outra forma (ex.: só os 50%), ajuste em **Ajustes → Regra da empresa** (por exemplo, coloque o máximo de dias em casa = 200 para ignorar o teto).
+```
+Dias de seg a sex (jul–dez)                               132
+− feriados em dia útil: 05/10, 01/12, 08/12, 25/12          −4
+= dias úteis                                               128
+
+Sem ausências:        128 trabalháveis → mínimo 64 no escritório (até 64 em casa)
+Com 10 dias de férias
+ + 3 dias de doença:  115 trabalháveis → mínimo 58 no escritório (até 57 em casa)
+```
+
+As ausências reduzem a base, mas a **percentagem mantém-se**: continua a ser preciso estar no escritório em metade dos dias em que efetivamente trabalhou. Repare que, com 13 dias de ausência, os dias em casa possíveis descem de 64 para 57. As ausências não "poupam" dias de casa.
+
+**E os 60 dias de home office?** Em semestres de cerca de 120 dias trabalháveis, 60 dias equivalem aos 50%. Por isso, por padrão, a app aplica só a regra mãe. Se a empresa contar os 60 dias de forma rígida *além* dos 50%, ligue **Ajustes → Aplicar também um teto absoluto**. Só faz diferença em semestres longos: com 128 dias trabalháveis passa a exigir 128 − 60 = 68 dias no escritório em vez de 64, e a app indica quando isso acontece.
 
 **Como o "ritmo necessário" é calculado:** `dias de escritório que faltam ÷ dias úteis ainda por decidir`. Ex.: faltam 28 dias e restam 41 dias úteis → 68% → ≈ 3,4 dias por semana. O estado fica:
 
@@ -79,6 +87,7 @@ presenca-app/
 │   │   ├── dates.js         datas ISO, semestres, fuso horário, Páscoa
 │   │   ├── holidays.js      feriados BR/PT + outros países (date-holidays) + modelos de cidades
 │   │   ├── offices.js       escritórios, viagens, "que calendário vale em cada dia"
+│   │   ├── absences.js      tipos de ausência e regras de justificação
 │   │   ├── compliance.js    metas, ritmo, meses, semanas, avisos
 │   │   └── geo.js           distância (Haversine) — também usado no navegador
 │   ├── reminders/
@@ -92,7 +101,7 @@ presenca-app/
 │   ├── index.html, app.js, styles.css
 │   ├── sw.js                service worker: push + botões da notificação + offline
 │   └── manifest.webmanifest
-└── test/                  ← node:test (31 testes)
+└── test/                  ← node:test (40 testes)
 ```
 
 - **Por que um servidor e não só uma página?** Para um lembrete chegar às 9h *com a app fechada*, alguém tem de enviar o push nessa hora. Navegadores não permitem que uma página "acorde sozinha" de forma confiável. O servidor envia; o service worker no seu celular/PC mostra.
@@ -111,7 +120,7 @@ Requer **Node.js 22.13+** (por causa do `node:sqlite`).
 ```bash
 cd presenca-app
 npm install
-npm test          # 31 testes: regras, feriados, escritórios/viagens e lembretes
+npm test          # 40 testes: regras, ausências, feriados, escritórios/viagens, lembretes e API
 npm start         # http://localhost:3000
 ```
 
@@ -150,4 +159,6 @@ Depois toque em **Enviar teste** para confirmar.
 - A localização **não é verificada em segundo plano**: o navegador não permite que uma página leia o GPS com a app fechada. Por isso o fluxo é "lembrete → toca → lê uma vez → confirma". (Isto também é o comportamento mais respeitador da privacidade.)
 - Feriados municipais dependem da cidade: use os modelos como ponto de partida e confira com o RH. Para países que não sejam Brasil/Portugal, confira também os regionais (a biblioteca cobre regiões, mas não todos os municípios).
 - O aviso de fuso diferente não detecta viagens a países no mesmo fuso (ex.: Lisboa ↔ Londres). Para esses casos, registre a viagem ou escolha o escritório ao responder.
+- Ausências são por **dia inteiro**. Meio dia de férias ou consulta médica de manhã não são modelados: registre o dia como escritório/casa conforme onde trabalhou a maior parte do tempo, ou confirme com o RH como contam.
+- A justificação é texto. Não há envio do documento (atestado em PDF/foto); guarde-o onde o RH pedir.
 - Aplicação de **um único usuário** (os seus dados). Para vários colegas, cada um publica sua própria instância — ou seria preciso adicionar contas de usuário.
