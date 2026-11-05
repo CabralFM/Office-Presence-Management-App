@@ -4,7 +4,7 @@ Aplicação web (PWA) para controlar os dias em que você trabalha **no escritó
 
 - **≥ 50% dos dias trabalhados no escritório**, medido por **semestre** (jan–jun e jul–dez);
 - **máximo de 60 dias em home office por semestre**;
-- considerando **feriados nacionais, pontos facultativos e feriados municipais/estaduais**.
+- considerando os **feriados do local de trabalho** (nacionais, regionais, municipais e pontos facultativos) — inclusive quando você trabalha num escritório da empresa **em outro país**.
 
 ## O que a aplicação faz
 
@@ -17,9 +17,32 @@ Aplicação web (PWA) para controlar os dias em que você trabalha **no escritó
 | **Avisos antecipados** | "Outubro fechou com 38% (abaixo de 50%)", "Para novembro cumprir a cota, vá mais 10 dos 17 dias úteis; para recuperar o atraso o ideal são 12", "Restam apenas 8 dias de home office", "Há 2 dias sem registro". |
 | **Planejamento** | Distribui os dias de escritório que faltam pelas semanas/meses restantes (semanas com feriado pedem menos). Botão "Sugerir plano automático" preenche as próximas 4 semanas, preferindo ter–qui. |
 | **Resumos** | Push no 1º dia útil da semana (recomendação da semana) e no 1º dia útil do mês (resultado do mês anterior + meta do mês). |
-| **Feriados** | Nacionais calculados automaticamente (Brasil ou Portugal, incluindo os móveis: Carnaval, Sexta-feira Santa, Corpus Christi). Facultativos ligáveis. Municipais/estaduais/da empresa editáveis, com modelos para várias cidades. |
+| **Escritórios** | Cadastre cada escritório (ex.: Lisboa, Madrid, São Paulo) com país, região, fuso, endereço e feriados municipais. Um deles é o **principal**. |
+| **Feriados por local de trabalho** | Cada dia usa o calendário do escritório onde você trabalha nesse dia. Brasil e Portugal: cálculo próprio (inclui móveis e facultativos). Outros ~200 países e regiões: biblioteca `date-holidays`, offline. Municipais: editáveis, com modelos (Lisboa, Almada, Porto, Seixal, Sintra, Madrid, São Paulo…). Aba Calendário → "Feriados do semestre" mostra cada feriado e de que escritório vem. |
+| **Viagens de trabalho** | Registre "Madrid, 08 a 12/06": nesses dias valem os feriados **e o fuso** de Madrid, os dias úteis contam como "planejado escritório" e o lembrete chega às 9h locais. |
+| **Perguntar quando muda o local** | (1) Se o fuso do aparelho for diferente do escritório previsto, a app pergunta *"Você está trabalhando em outro local?"* e pré-preenche a viagem. (2) Ao registrar "Escritório" escolhe-se em qual. (3) O check-in por localização reconhece **qual** escritório está mais perto e avisa se não for o previsto. (4) O resumo semanal pergunta se vai trabalhar em outro escritório. |
 | **Férias/ausências** | Marcar "Ausência" (passado) ou planejar "Ausência" (futuro) **retira o dia da base** — as metas são recalculadas. |
 | **Exportar** | CSV com todos os registros (para conferência com o RH ou backup). |
+
+## Feriados: de onde vêm, em cada dia
+
+Os feriados seguem o **local de trabalho**, não a morada. Para decidir o escritório de um dia, a app usa, por ordem:
+
+1. o escritório que você **registrou** nesse dia ("estive no escritório de Madrid");
+2. uma **viagem de trabalho** que cubra a data;
+3. o escritório **principal**.
+
+Exemplo (mora em Almada, trabalha em Lisboa, viaja a Madrid):
+
+| Data (2026) | Sem viagem | Em viagem a Madrid |
+|---|---|---|
+| 13/06 — Santo António (municipal de **Lisboa**) | feriado *(cai num sábado em 2026)* | — |
+| 24/06 — São João (municipal de **Almada**) | **dia útil** (você não trabalha em Almada) | — |
+| 10/06 — Dia de Portugal | feriado | **dia útil** (está trabalhando em Madrid) |
+| 15/05 — San Isidro (municipal de **Madrid**) | dia útil | **feriado** |
+| 02/11 — Finados (só no Brasil) | dia útil em Lisboa | — |
+
+Num dia de home office em Almada vale o calendário de Lisboa, porque é lá o seu local de trabalho.
 
 ## As regras, com números reais
 
@@ -54,7 +77,8 @@ presenca-app/
 ├── src/
 │   ├── core/              ← regras puras, sem I/O (testáveis)
 │   │   ├── dates.js         datas ISO, semestres, fuso horário, Páscoa
-│   │   ├── holidays.js      feriados BR/PT + locais + modelos de cidades
+│   │   ├── holidays.js      feriados BR/PT + outros países (date-holidays) + modelos de cidades
+│   │   ├── offices.js       escritórios, viagens, "que calendário vale em cada dia"
 │   │   ├── compliance.js    metas, ritmo, meses, semanas, avisos
 │   │   └── geo.js           distância (Haversine) — também usado no navegador
 │   ├── reminders/
@@ -68,13 +92,15 @@ presenca-app/
 │   ├── index.html, app.js, styles.css
 │   ├── sw.js                service worker: push + botões da notificação + offline
 │   └── manifest.webmanifest
-└── test/                  ← node:test (22 testes)
+└── test/                  ← node:test (31 testes)
 ```
 
 - **Por que um servidor e não só uma página?** Para um lembrete chegar às 9h *com a app fechada*, alguém tem de enviar o push nessa hora. Navegadores não permitem que uma página "acorde sozinha" de forma confiável. O servidor envia; o service worker no seu celular/PC mostra.
 - **Por que Web Push e não e-mail/WhatsApp?** Gratuito, sem contas de terceiros e com **botões de resposta** na própria notificação.
 - **Por que SQLite?** Uma app pessoal tem ~250 registros/ano. Um arquivo único é zero configuração e o backup é copiar `data/presenca.db`.
-- **Por que feriados calculados e não uma API?** Funciona offline, sem depender de serviço externo, e permite planejar semestres futuros.
+- **Por que feriados calculados e não uma API?** Funciona offline, sem depender de serviço externo, e permite planejar semestres futuros. Para os outros países usamos `date-holidays`, que também traz os dados no pacote (sem chamadas de rede).
+- **Por que o fuso do aparelho como sinal de viagem?** Não precisa de GPS nem de permissão, e é exatamente o que muda quando você atravessa uma fronteira com fuso diferente. Como não pega viagens no mesmo fuso (ex.: Lisboa → Londres), há também a escolha do escritório no registro e a detecção pela localização.
+- **Por que a viagem não grava "escritório" nos dias?** Ela só os conta como *planejados*. Se apagar ou alterar a viagem, nada fica para trás, e o registro real continua sendo a sua resposta diária.
 - **Por que a localização só no navegador?** Privacidade: o servidor nunca vê onde você está — só o resultado ("escritório"/"casa") e a distância arredondada. E é leitura única (`getCurrentPosition`), nunca rastreio contínuo.
 - **Por que o fuso horário é configurado?** Servidores na nuvem rodam em UTC. Sem isto, o "lembrete das 9h" chegaria às 6h em São Paulo.
 
@@ -85,7 +111,7 @@ Requer **Node.js 22.13+** (por causa do `node:sqlite`).
 ```bash
 cd presenca-app
 npm install
-npm test          # 22 testes das regras, feriados e lembretes
+npm test          # 31 testes: regras, feriados, escritórios/viagens e lembretes
 npm start         # http://localhost:3000
 ```
 
@@ -122,5 +148,6 @@ Depois toque em **Enviar teste** para confirmar.
 ## Limitações conhecidas
 
 - A localização **não é verificada em segundo plano**: o navegador não permite que uma página leia o GPS com a app fechada. Por isso o fluxo é "lembrete → toca → lê uma vez → confirma". (Isto também é o comportamento mais respeitador da privacidade.)
-- Feriados municipais dependem da sua cidade: use os modelos como ponto de partida e confira com o RH.
+- Feriados municipais dependem da cidade: use os modelos como ponto de partida e confira com o RH. Para países que não sejam Brasil/Portugal, confira também os regionais (a biblioteca cobre regiões, mas não todos os municípios).
+- O aviso de fuso diferente não detecta viagens a países no mesmo fuso (ex.: Lisboa ↔ Londres). Para esses casos, registre a viagem ou escolha o escritório ao responder.
 - Aplicação de **um único usuário** (os seus dados). Para vários colegas, cada um publica sua própria instância — ou seria preciso adicionar contas de usuário.

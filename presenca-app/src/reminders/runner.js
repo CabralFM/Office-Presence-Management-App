@@ -14,10 +14,13 @@ export async function tick(repo, push, date = new Date()) {
   const settings = repo.getSettings();
   const now = localNow(repo, date);
   const sem = semesterOf(now.date);
-  const holidays = holidaysFor(settings, sem);
   const day = repo.getDay(now.date);
   const monday = mondayOf(now.date);
   const monthStart = now.date.slice(0, 8) + '01';
+  // Feriados do escritório que vale em cada dia (pode ser o de uma viagem).
+  const from = monthStart < monday ? monthStart : monday;
+  const to = addDays(monday, 6);
+  const holidays = holidaysFor(settings, from, to, repo.getDays(from, to));
   const weekKey = `week:${monday}`;
   const monthKey = `month:${now.date.slice(0, 7)}`;
 
@@ -39,10 +42,10 @@ export async function tick(repo, push, date = new Date()) {
   for (const a of actions) {
     let msg = null;
     if (a.type === 'daily') {
-      msg = dailyMessage(report, now.date, a.count, a.useLocation);
+      msg = dailyMessage(report, now.date, a.count, a.useLocation, settings);
       repo.setReminderState(now.date, now.minutes, a.count);
     } else if (a.type === 'weekly') {
-      msg = weeklyMessage(report, now.date);
+      msg = weeklyMessage(report, now.date, settings);
       repo.markSent(a.key);
     } else if (a.type === 'monthly') {
       msg = monthlyMessage(report, now.date);

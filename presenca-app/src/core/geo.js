@@ -24,3 +24,17 @@ export function isAtOffice(position, office, radiusM) {
   const tolerance = Math.min(position.accuracy || 0, 500);
   return { distance: Math.round(d), atOffice: d <= radiusM + tolerance };
 }
+
+/**
+ * Escritório mais próximo da posição — permite reconhecer EM QUE escritório
+ * você está (ex.: chegou ao escritório de Madrid sem ter registrado a viagem).
+ */
+export function nearestOffice(position, offices) {
+  let best = null;
+  for (const o of offices) {
+    if (!o.location) continue;
+    const r = isAtOffice(position, o.location, o.radiusM || 200);
+    if (!best || r.distance < best.distance) best = { office: o, ...r };
+  }
+  return best;
+}

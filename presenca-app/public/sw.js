@@ -1,7 +1,7 @@
 // Service worker: recebe as notificações push e trata os botões
 // "🏢 Escritório" / "🏠 Casa" SEM precisar abrir a app.
 
-const CACHE = 'presenca-v1';
+const CACHE = 'presenca-v2';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/core/geo.js', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -45,7 +45,7 @@ self.addEventListener('push', (e) => {
       icon: '/icon.svg',
       badge: '/icon.svg',
       actions: data.actions || [],
-      data: { url: data.url || '/', date: data.date },
+      data: { url: data.url || '/', date: data.date, officeId: data.officeId },
     }),
   );
 });
@@ -53,7 +53,7 @@ self.addEventListener('push', (e) => {
 self.addEventListener('notificationclick', (e) => {
   const n = e.notification;
   n.close();
-  const { url, date } = n.data || {};
+  const { url, date, officeId } = n.data || {};
 
   if (e.action === 'office' || e.action === 'home') {
     // Resposta direta pelo botão da notificação.
@@ -62,7 +62,7 @@ self.addEventListener('notificationclick', (e) => {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: e.action, source: 'lembrete', date }),
+        body: JSON.stringify({ status: e.action, source: 'lembrete', date, officeId: e.action === 'office' ? officeId : undefined }),
       })
         .then(async (res) => {
           if (!res.ok) throw new Error(res.status);

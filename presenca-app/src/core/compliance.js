@@ -34,7 +34,7 @@ const plural = (n, s, p) => `${n} ${n === 1 ? s : p}`;
  *   pending                  → dia passado sem registro (precisa de ser preenchido)
  *   open                     → hoje/futuro ainda por decidir (pode ter plan office/home)
  */
-export function classifyDays({ semester, today, days, holidays }) {
+export function classifyDays({ semester, today, days, holidays, defaultPlan }) {
   const out = [];
   for (const date of eachDay(semester.start, semester.end)) {
     if (isWeekend(date)) continue;
@@ -49,7 +49,10 @@ export function classifyDays({ semester, today, days, holidays }) {
     else if (rec.plan === 'absence') kind = 'absence';
     else if (date < today) kind = 'pending';
     else kind = 'open';
-    out.push({ date, kind, plan: rec.status ? null : rec.plan || null, planned: !rec.status && rec.plan === 'absence' });
+    // defaultPlan: ex.: dias de uma viagem de trabalho contam como "planejado escritório"
+    // sem precisar marcar dia a dia (e deixam de contar se apagar a viagem).
+    const plan = rec.status ? null : rec.plan || (kind === 'open' ? defaultPlan?.(date) : null) || null;
+    out.push({ date, kind, plan, planned: !rec.status && rec.plan === 'absence' });
   }
   return out;
 }
@@ -100,9 +103,9 @@ export function allocate(n, capacities) {
   return result;
 }
 
-export function computeSemester({ semester, today, days, holidays, rules }) {
+export function computeSemester({ semester, today, days, holidays, rules, defaultPlan }) {
   const pct = rules.officePct / 100;
-  const classified = classifyDays({ semester, today, days, holidays });
+  const classified = classifyDays({ semester, today, days, holidays, defaultPlan });
   const totals = emptyCounts();
   for (const d of classified) count(totals, d);
 

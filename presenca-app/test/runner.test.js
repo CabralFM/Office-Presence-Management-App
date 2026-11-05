@@ -46,3 +46,39 @@ test('resumo mensal no 1º dia útil do mês (01/12/2026, terça)', async () => 
   await tick(repo, push, sp('2026-12-01', 9, 30));
   assert.equal(sent.filter((m) => m.tag === 'monthly-2026-12').length, 1);
 });
+
+test('em viagem a Nova Iorque, o lembrete sai às 9h de Nova Iorque', async () => {
+  const { repo, push, sent } = setup();
+  repo.updateSettings({
+    offices: [
+      { id: 'lx', name: 'Lisboa', country: 'PT', timezone: 'Europe/Lisbon', customHolidays: [] },
+      { id: 'ny', name: 'Nova Iorque', country: 'US', region: 'NY', timezone: 'America/New_York', customHolidays: [] },
+    ],
+    primaryOfficeId: 'lx',
+    trips: [{ id: 't', officeId: 'ny', start: '2026-11-09', end: '2026-11-13' }],
+    summaries: { weekly: false, monthly: false },
+  });
+  // 09:00 em Lisboa = 14:00Z? Não: Lisboa é UTC+0 em novembro → 09:00Z; NY é UTC−5 → 14:00Z
+  await tick(repo, push, new Date('2026-11-10T09:00:00Z'));
+  assert.equal(sent.length, 0, 'às 9h de Lisboa ainda são 4h em NY');
+  await tick(repo, push, new Date('2026-11-10T14:00:00Z'));
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].body, /Viagem: escritório de Nova Iorque/);
+  assert.equal(sent[0].officeId, 'ny');
+  assert.equal(sent[0].actions[0].title, '🏢 Nova Iorque');
+});
+
+test('feriado do escritório de destino (Veterans Day, 11/11 em NY) não gera lembrete; em Lisboa geraria', async () => {
+  const { repo, push, sent } = setup();
+  const offices = [
+    { id: 'lx', name: 'Lisboa', country: 'PT', timezone: 'Europe/Lisbon', customHolidays: [] },
+    { id: 'ny', name: 'Nova Iorque', country: 'US', region: 'NY', timezone: 'America/New_York', customHolidays: [] },
+  ];
+  repo.updateSettings({ offices, primaryOfficeId: 'lx', trips: [{ id: 't', officeId: 'ny', start: '2026-11-09', end: '2026-11-13' }] });
+  await tick(repo, push, new Date('2026-11-11T14:00:00Z'));
+  assert.equal(sent.filter((m) => m.tag?.startsWith('daily')).length, 0);
+
+  repo.updateSettings({ trips: [] });
+  await tick(repo, push, new Date('2026-11-11T09:00:00Z'));
+  assert.equal(sent.filter((m) => m.tag?.startsWith('daily')).length, 1);
+});

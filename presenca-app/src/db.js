@@ -6,13 +6,15 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { COUNTRIES, DEFAULT_OPTIONAL } from './core/holidays.js';
+import { normalizeSettings } from './core/offices.js';
 
 export const DEFAULT_SETTINGS = {
-  country: 'BR',
-  timezone: COUNTRIES.BR.timezone,
-  optionalHolidays: { ...DEFAULT_OPTIONAL },
-  customHolidays: [],
+  // Escritórios (cada um com país, região, fuso, feriados e localização).
+  // Vazio aqui → normalizeSettings() cria o "Escritório principal".
+  offices: [],
+  primaryOfficeId: null,
+  // Viagens de trabalho: [{ id, officeId, start, end, note }]
+  trips: [],
   rules: { officePct: 50, maxHomeDays: 60 },
   reminder: {
     enabled: true,
@@ -23,11 +25,11 @@ export const DEFAULT_SETTINGS = {
   },
   location: {
     enabled: false,
-    office: null, // { lat, lng, label }
-    radiusM: 200,
     windowStart: '09:00',
     windowEnd: '10:30',
   },
+  // Perguntar quando o fuso do aparelho não bate com o do escritório previsto
+  askOnTimezoneChange: true,
   summaries: { weekly: true, monthly: true },
 };
 
@@ -61,6 +63,11 @@ export function openDb(file) {
     CREATE TABLE IF NOT EXISTS sent_log (key TEXT PRIMARY KEY, sent_at TEXT NOT NULL);
   `);
 
+  // Migração: escritório em que o dia foi trabalhado (versões antigas não tinham).
+  if (!db.prepare('PRAGMA table_info(days)').all().some((c) => c.name === 'office_id')) {
+    db.exec('ALTER TABLE days ADD COLUMN office_id TEXT');
+  }
+
   const kvGet = db.prepare('SELECT value FROM kv WHERE key = ?');
   const kvSet = db.prepare('INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
 
@@ -76,7 +83,7 @@ export function openDb(file) {
     },
 
     getSettings() {
-      return deepMerge(DEFAULT_SETTINGS, repo.getKV('settings') || {});
+      return normalizeSettings(deepMerge(DEFAULT_SETTINGS, repo.getKV('settings') || {}));
     },
     updateSettings(patch) {
       const next = deepMerge(repo.getSettings(), patch);
@@ -87,14 +94,16 @@ export function openDb(file) {
     /** Map ISO → {status, plan, source, note, distance} */
     getDays(start, end) {
       const rows = db.prepare('SELECT * FROM days WHERE date BETWEEN ? AND ? ORDER BY date').all(start, end);
-      return new Map(rows.map((r) => [r.date, { status: r.status, plan: r.plan, source: r.source, note: r.note, distance: r.distance_m }]));
+      return new Map(
+        rows.map((r) => [r.date, { status: r.status, plan: r.plan, source: r.source, note: r.note, distance: r.distance_m, officeId: r.office_id }]),
+      );
     },
     getDay(date) {
       return repo.getDays(date, date).get(date) || null;
     },
 
     /** Grava/atualiza um dia. Campos ausentes mantêm o valor anterior; null apaga. */
-    upsertDay(date, { status, plan, source, note, distance }) {
+    upsertDay(date, { status, plan, source, note, distance, officeId }) {
       if (status != null && !VALID_STATUS.has(status)) throw new Error('status inválido');
       if (plan != null && !VALID_STATUS.has(plan)) throw new Error('plan inválido');
       const prev = repo.getDay(date) || {};
@@ -104,16 +113,19 @@ export function openDb(file) {
         source: source === undefined ? prev.source ?? null : source,
         note: note === undefined ? prev.note ?? null : note,
         distance: distance === undefined ? prev.distance ?? null : distance,
+        officeId: officeId === undefined ? prev.officeId ?? null : officeId,
       };
+      // O escritório só faz sentido em dias de escritório.
+      if (next.status !== 'office') next.officeId = null;
       if (!next.status && !next.plan && !next.note) {
         db.prepare('DELETE FROM days WHERE date = ?').run(date);
         return null;
       }
       db.prepare(
-        `INSERT INTO days (date, status, plan, source, note, distance_m, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO days (date, status, plan, source, note, distance_m, office_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(date) DO UPDATE SET status=excluded.status, plan=excluded.plan, source=excluded.source,
-           note=excluded.note, distance_m=excluded.distance_m, updated_at=excluded.updated_at`,
-      ).run(date, next.status, next.plan, next.source, next.note, next.distance, new Date().toISOString());
+           note=excluded.note, distance_m=excluded.distance_m, office_id=excluded.office_id, updated_at=excluded.updated_at`,
+      ).run(date, next.status, next.plan, next.source, next.note, next.distance, next.officeId, new Date().toISOString());
       return next;
     },
 

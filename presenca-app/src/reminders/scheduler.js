@@ -24,7 +24,7 @@ export function decide(p) {
 
   const r = settings.reminder;
   const loc = settings.location;
-  const useLocation = Boolean(loc?.enabled && loc.office);
+  const useLocation = Boolean(loc?.enabled && settings.offices?.some((o) => o.location));
   // No modo localização o primeiro lembrete sai no início da janela de localização.
   const start = minutesFromHHMM(useLocation ? loc.windowStart : r.time);
   const end = minutesFromHHMM(r.until);

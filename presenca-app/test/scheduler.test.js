@@ -36,7 +36,7 @@ test('para depois de responder, em feriados, fins de semana e depois das 18h', (
 });
 
 test('modo localização começa no início da janela', () => {
-  const settings = { ...DEFAULT_SETTINGS, location: { ...DEFAULT_SETTINGS.location, enabled: true, office: { lat: 0, lng: 0 }, windowStart: '10:00' } };
+  const settings = { ...DEFAULT_SETTINGS, offices: [{ id: 'a', location: { lat: 0, lng: 0 } }], location: { ...DEFAULT_SETTINGS.location, enabled: true, windowStart: '10:00' } };
   assert.deepEqual(decide({ ...base, settings, now: at(9, 30) }), []);
   const a = decide({ ...base, settings, now: at(10) });
   assert.equal(a[0].useLocation, true);

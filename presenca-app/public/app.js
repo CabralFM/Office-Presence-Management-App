@@ -3,7 +3,7 @@
 // um passo de build e dependências a manter sem ganho real. Tudo aqui é
 // "render a partir do estado": cada ação chama a API e volta a desenhar.
 
-import { isAtOffice } from '/core/geo.js';
+import { nearestOffice } from '/core/geo.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -105,34 +105,113 @@ $('#semester-select').addEventListener('change', (e) => {
   load();
 });
 
+const officeById = (id) => S.settings.offices.find((o) => o.id === id);
+const officeName = (id) => officeById(id)?.name || '?';
+const multiOffice = () => S.settings.offices.length > 1;
+const tripFor = (date) => S.settings.trips.find((t) => t.start <= date && date <= t.end) || null;
+const fmtDist = (m) => (m == null ? '?' : m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
+
 function renderToday() {
   const t = S.today;
   const el = $('#today-card');
+  const expected = t.expectedOfficeId;
+  const where = t.trip
+    ? `✈️ Em viagem: <b>${h(officeName(t.trip.officeId))}</b> (${fmtDM(t.trip.start)}–${fmtDM(t.trip.end)}) — valem os feriados e o fuso deste escritório.`
+    : multiOffice()
+      ? `Escritório de referência hoje: <b>${h(officeName(expected))}</b> (feriados deste local).`
+      : '';
+  const head = `<div class="big">Hoje, ${h(fmtLong(t.date))}</div>${where ? `<p class="hint">${where}</p>` : ''}<div id="tz-banner"></div>`;
   if (!t.workingDay) {
-    el.innerHTML = `<div class="big">Hoje, ${h(fmtLong(t.date))}</div><p>${t.holiday ? `🎉 Feriado: <b>${h(t.holiday.name)}</b>` : 'Fim de semana — bom descanso! 😌'}</p>`;
+    el.innerHTML = `${head}<p>${t.holiday ? `🎉 Feriado: <b>${h(t.holiday.name)}</b> (${h(t.holiday.officeName)})` : 'Fim de semana — bom descanso! 😌'}</p>`;
+    renderTzBanner();
     return;
   }
-  const cur = t.record?.status;
-  const loc = S.settings.location;
-  const canGeo = loc.enabled && loc.office;
-  el.innerHTML = `
-    <div class="big">Hoje, ${h(fmtLong(t.date))}</div>
-    <p class="hint">${cur ? `Registrado: <b>${ICON[cur]} ${LABEL[cur]}</b>${t.record.source === 'localizacao' ? ` (pela localização, a ${t.record.distance} m do escritório)` : ''}. Pode alterar abaixo.` : 'Onde você está trabalhando hoje?'}</p>
+  const rec = t.record;
+  const cur = rec?.status;
+  const canGeo = S.settings.location.enabled && S.settings.offices.some((o) => o.location);
+  const officeSel = multiOffice()
+    ? `<label class="inline">🏢 Em que escritório? <select id="office-pick">${S.settings.offices
+        .map((o) => `<option value="${o.id}" ${o.id === (rec?.officeId || expected) ? 'selected' : ''}>${h(o.name)}</option>`)
+        .join('')}</select></label>`
+    : '';
+  el.innerHTML = `${head}
+    <p class="hint">${
+      cur
+        ? `Registrado: <b>${ICON[cur]} ${LABEL[cur]}${cur === 'office' && multiOffice() ? ` · ${h(officeName(rec.officeId))}` : ''}</b>${rec.source === 'localizacao' ? ` (pela localização, a ${fmtDist(rec.distance)})` : ''}. Pode alterar abaixo.`
+        : 'Onde você está trabalhando hoje?'
+    }</p>
     <div class="choice">
       ${['office', 'home', 'absence'].map((s) => `<button data-checkin="${s}" class="${s} ${cur === s ? 'sel' : ''}">${ICON[s]} ${LABEL[s]}</button>`).join('')}
     </div>
+    ${officeSel}
     ${canGeo && !cur ? `<button id="geo-check">📍 Verificar pela localização</button>` : ''}
     <div id="geo-box"></div>`;
-  $$('[data-checkin]', el).forEach((b) => b.addEventListener('click', () => checkin(b.dataset.checkin, 'manual')));
+  $$('[data-checkin]', el).forEach((b) =>
+    b.addEventListener('click', () => checkin(b.dataset.checkin, 'manual', null, b.dataset.checkin === 'office' ? $('#office-pick')?.value : undefined)),
+  );
+  // Trocar o escritório depois de já ter registrado "Escritório" corrige o registro.
+  $('#office-pick')?.addEventListener('change', (e) => cur === 'office' && checkin('office', 'manual', null, e.target.value));
   $('#geo-check', el)?.addEventListener('click', () => locationCheckin());
+  renderTzBanner();
   if (geoResult) renderGeoResult();
 }
 
-async function checkin(status, source, distance = null) {
-  await api('/api/checkin', { method: 'POST', body: { status, source, distance } });
+async function checkin(status, source, distance = null, officeId) {
+  await api('/api/checkin', { method: 'POST', body: { status, source, distance, officeId } });
   geoResult = null;
-  toast(`Registrado: ${LABEL[status]}`);
+  toast(`Registrado: ${LABEL[status]}${status === 'office' && multiOffice() && officeId ? ` · ${officeName(officeId)}` : ''}`);
   await load();
+}
+
+// ---------------------------------------------------------------- fuso horário
+// Sinal barato e sem GPS: se o fuso do aparelho for diferente do fuso do
+// escritório previsto, é provável que esteja em outro país → perguntamos.
+function deviceTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+}
+
+const currentSemesterId = () => `${S.now.date.slice(0, 4)}-${Number(S.now.date.slice(5, 7)) <= 6 ? 1 : 2}`;
+
+function renderTzBanner() {
+  const box = $('#tz-banner');
+  if (!box) return;
+  const tz = deviceTimeZone();
+  const exp = officeById(S.today.expectedOfficeId);
+  const key = `tz-dismiss-${S.now.date}`;
+  let dismissed = false;
+  try {
+    dismissed = localStorage.getItem(key) === '1';
+  } catch {}
+  if (!S.settings.askOnTimezoneChange || !tz || !exp || tz === exp.timezone || dismissed || S.today.trip) {
+    box.innerHTML = '';
+    return;
+  }
+  const match = S.settings.offices.find((o) => o.timezone === tz && o.id !== exp.id);
+  box.innerHTML = `<div class="geo-result">🌍 Seu aparelho está no fuso <b>${h(tz)}</b>, mas o escritório previsto para hoje (${h(exp.name)}) usa <b>${h(exp.timezone)}</b>. Você está trabalhando em outro local?
+    <div class="row"><button id="tz-trip" class="primary">✈️ Sim, registrar viagem${match ? ` a ${h(match.name)}` : ''}</button><button id="tz-no">Não, ignorar hoje</button></div></div>`;
+  $('#tz-no').onclick = () => {
+    try {
+      localStorage.setItem(key, '1');
+    } catch {}
+    box.innerHTML = '';
+  };
+  $('#tz-trip').onclick = () => {
+    if (!match) {
+      toast('Cadastre primeiro o escritório de destino.');
+      location.hash = '#config';
+      openOffice(null, { timezone: tz });
+      return;
+    }
+    location.hash = '#planejamento';
+    const f = $('#trip-form');
+    f.officeId.value = match.id;
+    f.start.value = f.end.value = S.now.date;
+    f.end.focus();
+  };
 }
 
 // ---------------------------------------------------------------- localização
@@ -165,7 +244,7 @@ async function locationCheckin() {
   if (box) box.innerHTML = '<p class="hint">Obtendo localização…</p>';
   try {
     const pos = await getPosition();
-    geoResult = isAtOffice(pos, loc.office, loc.radiusM); // pos é descartada aqui
+    geoResult = nearestOffice(pos, S.settings.offices); // pos é descartada aqui
     renderGeoResult();
   } catch (e) {
     if (box) box.innerHTML = `<p class="error">${h(e.message)}</p>`;
@@ -174,17 +253,28 @@ async function locationCheckin() {
 
 function renderGeoResult() {
   const box = $('#geo-box');
-  if (!box || !geoResult) return;
-  const guess = geoResult.atOffice ? 'office' : 'home';
-  const dist = geoResult.distance >= 1000 ? `${(geoResult.distance / 1000).toFixed(1)} km` : `${geoResult.distance} m`;
-  box.innerHTML = `<div class="geo-result">
-      📍 Você está a <b>${dist}</b> do escritório. Parece que está <b>${geoResult.atOffice ? 'no escritório' : 'em casa / fora do escritório'}</b>. Confirma?
-      <div class="choice">
-        <button class="${guess}" id="geo-yes">✔ Sim, ${LABEL[guess]}</button>
-        <button id="geo-no">✖ Não, ${LABEL[guess === 'office' ? 'home' : 'office']}</button>
-      </div></div>`;
-  $('#geo-yes').onclick = () => checkin(guess, 'localizacao', geoResult.distance);
-  $('#geo-no').onclick = () => checkin(guess === 'office' ? 'home' : 'office', 'manual', geoResult.distance);
+  const g = geoResult;
+  if (!box || !g) return;
+  const expected = S.today.expectedOfficeId;
+  let text;
+  let yes;
+  let no;
+  if (g.atOffice) {
+    const other = g.office.id !== expected;
+    text = `📍 Você está a <b>${fmtDist(g.distance)}</b> do escritório <b>${h(g.office.name)}</b>.${
+      other ? ` ⚠️ O previsto para hoje era <b>${h(officeName(expected))}</b>: se confirmar, valem os feriados de ${h(g.office.name)} neste dia.` : ''
+    } Confirma que está no escritório?`;
+    yes = { label: `✔ Sim, ${h(g.office.name)}`, cls: 'office', go: () => checkin('office', 'localizacao', g.distance, g.office.id) };
+    no = { label: '✖ Não, estou em casa', go: () => checkin('home', 'manual', g.distance) };
+  } else {
+    text = `📍 Você está a <b>${fmtDist(g.distance)}</b> do escritório mais próximo (${h(g.office.name)}). Parece que está <b>em casa / fora do escritório</b>. Confirma?`;
+    yes = { label: '✔ Sim, Casa', cls: 'home', go: () => checkin('home', 'localizacao', g.distance) };
+    no = { label: '✖ Não, estou no escritório', go: () => checkin('office', 'manual', g.distance, $('#office-pick')?.value || expected) };
+  }
+  box.innerHTML = `<div class="geo-result">${text}
+      <div class="choice"><button class="${yes.cls}" id="geo-yes">${yes.label}</button><button id="geo-no">${no.label}</button></div></div>`;
+  $('#geo-yes').onclick = yes.go;
+  $('#geo-no').onclick = no.go;
 }
 
 // ---------------------------------------------------------------- semestre
@@ -231,17 +321,20 @@ function dayInfo(date) {
   const hol = S.holidays[date];
   const rec = S.days[date] || {};
   const wd = new Date(date + 'T12:00:00Z').getUTCDay();
-  return { hol, rec, weekend: wd === 0 || wd === 6, past: date < S.now.date, today: date === S.now.date, future: date > S.now.date };
+  const trip = tripFor(date);
+  // Dias de viagem sem plano explícito contam como "planejado escritório" (igual ao servidor).
+  const plan = rec.status ? null : rec.plan || (trip && date >= S.now.date ? 'office' : null);
+  return { hol, rec, trip, plan, weekend: wd === 0 || wd === 6, past: date < S.now.date, today: date === S.now.date, future: date > S.now.date };
 }
 
 function dayClasses(date) {
-  const { hol, rec, weekend, past, today } = dayInfo(date);
+  const { hol, rec, plan, weekend, past, today } = dayInfo(date);
   const c = ['day'];
   if (weekend) c.push('weekend');
   else if (hol) c.push('holiday');
   else if (rec.status) c.push(rec.status);
   else if (past) c.push('pending');
-  if (!rec.status && rec.plan) c.push(`plan-${rec.plan}`);
+  if (plan) c.push(`plan-${plan}`);
   if (today) c.push('today');
   return c.join(' ');
 }
@@ -260,21 +353,33 @@ function renderCalendar() {
     cells += '<div class="day empty"></div>'.repeat(lead);
     for (let d = 1; d <= days; d++) {
       const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const { hol, rec } = dayInfo(iso);
-      const title = hol ? hol.name : rec.note || '';
-      cells += `<button class="${dayClasses(iso)}" data-day="${iso}" title="${h(title)}">${d}${rec.status ? `<small>${ICON[rec.status]}</small>` : ''}</button>`;
+      const { hol, rec, trip } = dayInfo(iso);
+      const title = [hol && `${hol.name} (${hol.officeName})`, trip && `Viagem: ${officeName(trip.officeId)}`, rec.note].filter(Boolean).join(' · ');
+      cells += `<button class="${dayClasses(iso)}" data-day="${iso}" title="${h(title)}">${trip ? '<span class="trip">✈️</span>' : ''}${d}${rec.status ? `<small>${ICON[rec.status]}</small>` : ''}</button>`;
     }
     html += `<div class="month"><h3>${first.toLocaleDateString('pt-BR', { month: 'long', timeZone: 'UTC' })}
       <small>${mi ? `🏢 ${mi.office} · 🏠 ${mi.home} · ${pct(mi.officePct)}` : ''}</small></h3><div class="cal">${cells}</div></div>`;
   }
   $('#calendar').innerHTML = html;
   $$('#calendar [data-day]').forEach((b) => b.addEventListener('click', () => openDay(b.dataset.day)));
+
+  // Lista de feriados — útil para conferir (ex.: 13/06 Lisboa sim, 24/06 Almada não).
+  const scopeTxt = { nacional: 'nacional', facultativo: 'facultativo', municipal: 'municipal', estadual: 'estadual/regional', empresa: 'empresa' };
+  $('#holiday-list').innerHTML =
+    Object.entries(S.holidays)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([d, x]) => {
+        const wd = new Date(d + 'T12:00:00Z').getUTCDay();
+        const weekend = wd === 0 || wd === 6;
+        return `<li${weekend ? ' class="hint"' : ''}><span>${DOW[wd]} ${fmtDM(d)} — ${h(x.name)} <small>${scopeTxt[x.type] || x.type} · ${h(x.officeName)}${weekend ? ' · cai no fim de semana' : ''}</small></span></li>`;
+      })
+      .join('') || '<li class="hint">Nenhum feriado neste semestre.</li>';
 }
 
 function openDay(date) {
   const { hol, rec, weekend, future } = dayInfo(date);
   if (weekend) return;
-  if (hol) return toast(`Feriado: ${hol.name}`);
+  if (hol) return toast(`Feriado: ${hol.name} (${hol.officeName})`);
   const dlg = $('#day-dialog');
   $('#dd-title').textContent = fmtLong(date);
   $('#dd-sub').textContent = future
@@ -282,7 +387,16 @@ function openDay(date) {
     : rec.status
       ? `Registrado: ${LABEL[rec.status]}${rec.source ? ` (${rec.source})` : ''}`
       : 'Sem registro — onde trabalhou?';
+  const trip = tripFor(date);
+  if (trip) $('#dd-sub').textContent += ` ✈️ Viagem: ${officeName(trip.officeId)}.`;
   const field = future ? 'plan' : 'status';
+  // Dia passado com vários escritórios: em qual esteve? (define os feriados desse dia)
+  const showOffice = !future && multiOffice();
+  $('#dd-office-wrap').hidden = !showOffice;
+  if (showOffice) {
+    const sel = rec.officeId || trip?.officeId || S.settings.primaryOfficeId;
+    $('#dd-office').innerHTML = S.settings.offices.map((o) => `<option value="${o.id}" ${o.id === sel ? 'selected' : ''}>${h(o.name)}</option>`).join('');
+  }
   const cur = rec[field];
   $('#dd-buttons').innerHTML =
     ['office', 'home', 'absence'].map((s) => `<button type="button" class="${s} ${cur === s ? 'sel' : ''}" data-v="${s}">${ICON[s]} ${future ? 'Planejar ' : ''}${LABEL[s]}</button>`).join('') +
@@ -290,7 +404,9 @@ function openDay(date) {
   $('#dd-note').value = rec.note || '';
   $$('#dd-buttons button').forEach((b) =>
     b.addEventListener('click', async () => {
-      await api(`/api/days/${date}`, { method: 'PUT', body: { [field]: b.dataset.v || null, note: $('#dd-note').value || null } });
+      const body = { [field]: b.dataset.v || null, note: $('#dd-note').value || null };
+      if (showOffice && b.dataset.v === 'office') body.officeId = $('#dd-office').value;
+      await api(`/api/days/${date}`, { method: 'PUT', body });
       dlg.close();
       await load();
     }),
@@ -311,6 +427,7 @@ function renderPlanning() {
     }${r.plan.homeOverCap ? ` ⚠️ O plano excede o limite de casa em ${r.plan.homeOverCap} dia(s).` : ''}</p>
     <div class="row"><button id="auto-plan">✨ Sugerir plano automático para as próximas 4 semanas</button></div>`;
   $('#auto-plan').onclick = autoPlan;
+  renderTrips();
 
   const weeks = r.weeks.filter((w) => !w.isPast);
   $('#weeks').innerHTML =
@@ -319,10 +436,10 @@ function renderPlanning() {
         const days = [0, 1, 2, 3, 4].map((i) => {
           const d = addDaysIso(w.start, i);
           const inSem = d >= S.semester.start && d <= S.semester.end;
-          const { hol, rec, future, today } = dayInfo(d);
+          const { hol, rec, plan, trip, future, today } = dayInfo(d);
           const disabled = !inSem || hol || (!future && !today) || rec.status;
-          const cls = rec.status || (rec.plan ? `plan-${rec.plan}` : '');
-          const lbl = hol ? '🎉' : rec.status ? ICON[rec.status] : rec.plan ? ICON[rec.plan] : '·';
+          const cls = rec.status || (plan ? `plan-${plan}` : '');
+          const lbl = hol ? '🎉' : rec.status ? ICON[rec.status] : plan ? ICON[plan] + (trip ? '✈️' : '') : '·';
           return `<button data-plan="${d}" class="${cls}" ${disabled ? 'disabled' : ''} title="${h(hol?.name || '')}">${DOW[i + 1]} ${fmtDM(d)}<br>${lbl}</button>`;
         });
         const planned = w.plannedOffice + w.office;
@@ -334,6 +451,41 @@ function renderPlanning() {
       .join('') || '<p class="hint">Semestre encerrado.</p>';
   $$('#weeks [data-plan]').forEach((b) => b.addEventListener('click', () => cyclePlan(b.dataset.plan)));
 }
+
+function renderTrips() {
+  const f = $('#trip-form');
+  const keep = f.officeId.value;
+  // Escritórios não principais primeiro (são os destinos típicos de viagem).
+  const opts = [...S.settings.offices].sort((a, b) => (a.id === S.settings.primaryOfficeId) - (b.id === S.settings.primaryOfficeId));
+  f.officeId.innerHTML = opts.map((o) => `<option value="${o.id}">${h(o.name)}</option>`).join('');
+  if (keep) f.officeId.value = keep;
+  $('#trips').innerHTML =
+    S.settings.trips
+      .map(
+        (t) => `<li><span>✈️ <b>${h(officeName(t.officeId))}</b> · ${fmtDM(t.start)}/${t.start.slice(0, 4)} – ${fmtDM(t.end)}/${t.end.slice(0, 4)}${t.note ? ` <small>${h(t.note)}</small>` : ''}</span>
+          <span class="actions"><button type="button" data-trip-del="${t.id}">✖</button></span></li>`,
+      )
+      .join('') || `<li class="hint">Nenhuma viagem registrada.${multiOffice() ? '' : ' Cadastre primeiro os escritórios de destino em Ajustes.'}</li>`;
+  $$('[data-trip-del]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      await api(`/api/trips/${b.dataset.tripDel}`, { method: 'DELETE' });
+      await load();
+    }),
+  );
+}
+
+$('#trip-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api('/api/trips', { method: 'POST', body: { officeId: f.officeId.value, start: f.start.value, end: f.end.value, note: f.note.value } });
+    f.reset();
+    toast('Viagem registrada');
+    await load();
+  } catch (err) {
+    toast(err.message);
+  }
+});
 
 function addDaysIso(iso, n) {
   const d = new Date(iso + 'T12:00:00Z');
@@ -357,8 +509,8 @@ async function autoPlan() {
     const free = [];
     for (let i = 0; i < 5; i++) {
       const d = addDaysIso(w.start, i);
-      const { hol, rec, future, today } = dayInfo(d);
-      if (d < S.semester.start || d > S.semester.end || hol || rec.status || rec.plan || (!future && !today)) continue;
+      const { hol, rec, plan, future, today } = dayInfo(d);
+      if (d < S.semester.start || d > S.semester.end || hol || rec.status || plan || (!future && !today)) continue;
       free.push({ d, wd: i + 1 });
     }
     free.sort((a, b) => prefer.indexOf(a.wd) - prefer.indexOf(b.wd));
@@ -374,8 +526,6 @@ async function autoPlan() {
 }
 
 // ---------------------------------------------------------------- configurações
-let customHolidays = [];
-
 function renderSettings() {
   const s = S.settings;
   const f = $('#settings-form');
@@ -389,101 +539,219 @@ function renderSettings() {
   f.monthly.checked = s.summaries.monthly;
   $('.weekdays').innerHTML =
     '<legend>Dias</legend>' + [1, 2, 3, 4, 5].map((d) => `<label><input type="checkbox" name="wd" value="${d}" ${s.reminder.weekdays.includes(d) ? 'checked' : ''}/> ${DOW[d]}</label>`).join('');
-
   f.locationEnabled.checked = s.location.enabled;
-  f.radiusM.value = s.location.radiusM;
   f.windowStart.value = s.location.windowStart;
   f.windowEnd.value = s.location.windowEnd;
-  f.officeAddress.value = s.location.office?.label || '';
-  officeDraft = s.location.office;
-  renderOfficeInfo();
-
-  f.country.innerHTML = Object.entries(S.meta.countries).map(([k, v]) => `<option value="${k}" ${k === s.country ? 'selected' : ''}>${v.name}</option>`).join('');
-  f.timezone.value = s.timezone;
-  $('#optional-holidays').innerHTML =
-    '<legend>Pontos facultativos concedidos pela empresa</legend>' +
-    S.meta.optionalHolidays[s.country].map((o) => `<label><input type="checkbox" name="opt" value="${o.key}" ${s.optionalHolidays[o.key] ? 'checked' : ''}/> ${o.name}</label>`).join('');
-  $('#preset-select').innerHTML =
-    '<option value="">Adicionar modelo de cidade…</option>' + S.meta.presets[s.country].map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
-  customHolidays = structuredClone(s.customHolidays);
-  renderCustomHolidays();
+  f.askOnTimezoneChange.checked = s.askOnTimezoneChange;
+  renderOffices();
   renderPushStatus();
 }
 
-let officeDraft = null;
-function renderOfficeInfo() {
-  $('#office-info').textContent = officeDraft
-    ? `Escritório: ${officeDraft.label || ''} (${officeDraft.lat.toFixed(5)}, ${officeDraft.lng.toFixed(5)})`
-    : 'Nenhum escritório definido.';
-}
+let regionNames = null;
+try {
+  regionNames = new Intl.DisplayNames(['pt-BR'], { type: 'region' });
+} catch {}
+const countryName = (c) => {
+  try {
+    return regionNames?.of(c) || S.meta.countries[c] || c;
+  } catch {
+    return S.meta.countries[c] || c;
+  }
+};
 
-function renderCustomHolidays() {
-  const fmt = (d) => (d.length === 5 ? `${d.slice(3)}/${d.slice(0, 2)} (todo ano)` : `${d.slice(8)}/${d.slice(5, 7)}/${d.slice(0, 4)}`);
-  $('#custom-holidays').innerHTML =
-    customHolidays.map((c, i) => `<li><span>${fmt(c.date)} — ${h(c.name)} <small class="hint">${c.scope}</small></span><button type="button" data-rm="${i}">✖</button></li>`).join('') ||
-    '<li class="hint">Nenhum feriado local. Adicione os da sua cidade/estado.</li>';
-  $$('#custom-holidays [data-rm]').forEach((b) =>
-    b.addEventListener('click', () => {
-      customHolidays.splice(Number(b.dataset.rm), 1);
-      renderCustomHolidays();
+function renderOffices() {
+  const s = S.settings;
+  $('#offices').innerHTML = s.offices
+    .map((o) => {
+      const primary = o.id === s.primaryOfficeId;
+      return `<li><span><b>${h(o.name)}</b>${primary ? ' ⭐ principal' : ''}<br>
+        <small>${h(countryName(o.country))}${o.region ? ` · ${h(o.regionName || o.region)}` : ''} · ${h(o.timezone)} · ${o.location ? '📍 localização definida' : 'sem localização'} · ${o.customHolidays.length} feriado(s) local(is)</small></span>
+        <span class="actions"><button type="button" data-of-edit="${o.id}">Editar</button>${primary ? '' : `<button type="button" data-of-primary="${o.id}" title="Tornar principal">⭐</button><button type="button" data-of-del="${o.id}" title="Remover">✖</button>`}</span></li>`;
+    })
+    .join('');
+  $$('[data-of-edit]').forEach((b) => b.addEventListener('click', () => openOffice(b.dataset.ofEdit)));
+  $$('[data-of-primary]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      await api('/api/settings', { method: 'PUT', body: { primaryOfficeId: b.dataset.ofPrimary } });
+      toast('Escritório principal alterado');
+      await load();
+    }),
+  );
+  $$('[data-of-del]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm(`Remover o escritório "${officeName(b.dataset.ofDel)}" (e as viagens associadas)?`)) return;
+      try {
+        await api(`/api/offices/${b.dataset.ofDel}`, { method: 'DELETE' });
+        await load();
+      } catch (err) {
+        toast(err.message);
+      }
     }),
   );
 }
 
-$('#preset-select').addEventListener('change', (e) => {
-  const p = S.meta.presets[$('#settings-form').country.value]?.find((x) => x.id === e.target.value);
+// ---- diálogo de escritório -------------------------------------------------------
+let officeEdit = null; // rascunho em edição
+let countryMeta = null; // regiões, fusos, facultativos e modelos do país escolhido
+
+async function openOffice(id, preset = {}) {
+  const primary = officeById(S.settings.primaryOfficeId);
+  officeEdit = id
+    ? structuredClone(officeById(id))
+    : {
+        name: '',
+        country: primary?.country || 'PT',
+        region: '',
+        timezone: '',
+        location: null,
+        radiusM: 200,
+        optionalHolidays: { carnaval: true, corpusChristi: true },
+        customHolidays: [],
+        ...preset,
+      };
+  const f = $('#office-form');
+  $('#of-title').textContent = id ? `Editar: ${officeEdit.name}` : 'Novo escritório';
+  f.name.value = officeEdit.name;
+  f.address.value = officeEdit.location?.label || '';
+  f.radiusM.value = officeEdit.radiusM;
+  f.primary.checked = id === S.settings.primaryOfficeId;
+  const codes = Object.keys(S.meta.countries).sort((a, b) => countryName(a).localeCompare(countryName(b), 'pt'));
+  const top = ['PT', 'BR'];
+  f.country.innerHTML = [...top, ...codes.filter((c) => !top.includes(c))].map((c) => `<option value="${c}">${h(countryName(c))}</option>`).join('');
+  f.country.value = officeEdit.country;
+  await loadCountryMeta(officeEdit.country);
+  $('#office-dialog').showModal();
+}
+
+async function loadCountryMeta(country) {
+  countryMeta = await api(`/api/countries/${country}`);
+  const f = $('#office-form');
+  const regions = Object.entries(countryMeta.regions);
+  f.region.innerHTML = `<option value="">${regions.length ? '— todo o país —' : '— (não se aplica) —'}</option>` + regions.map(([k, v]) => `<option value="${k}">${h(v)}</option>`).join('');
+  f.region.value = officeEdit.region || '';
+  f.region.disabled = regions.length === 0;
+  const tzs = [...new Set([...(countryMeta.timezones || []), officeEdit.timezone].filter(Boolean))];
+  if (!officeEdit.timezone) officeEdit.timezone = tzs[0] || 'UTC';
+  f.timezone.innerHTML = (tzs.length ? tzs : ['UTC']).map((z) => `<option>${h(z)}</option>`).join('');
+  f.timezone.value = officeEdit.timezone;
+  $('#of-optional').innerHTML =
+    '<legend>Pontos facultativos concedidos</legend>' +
+    countryMeta.optional.map((o) => `<label><input type="checkbox" data-opt="${o.key}" ${officeEdit.optionalHolidays?.[o.key] ? 'checked' : ''}/> ${h(o.name)}</label>`).join('');
+  $('#of-preset').innerHTML =
+    `<option value="">${countryMeta.presets.length ? 'Adicionar modelo de cidade…' : 'Sem modelos para este país — adicione abaixo'}</option>` +
+    countryMeta.presets.map((p) => `<option value="${p.id}">${h(p.name)}</option>`).join('');
+  renderOfficeLoc();
+  renderOfficeCustom();
+}
+
+function renderOfficeLoc() {
+  const l = officeEdit.location;
+  $('#of-loc').textContent = l ? `📍 ${l.label || ''} (${l.lat.toFixed(5)}, ${l.lng.toFixed(5)})` : 'Sem localização (necessária só para o check-in por localização).';
+}
+
+function renderOfficeCustom() {
+  const fmt = (d) => (d.length === 5 ? `${d.slice(3)}/${d.slice(0, 2)} (todo ano)` : `${d.slice(8)}/${d.slice(5, 7)}/${d.slice(0, 4)}`);
+  $('#of-custom').innerHTML =
+    officeEdit.customHolidays.map((c, i) => `<li><span>${fmt(c.date)} — ${h(c.name)} <small>${c.scope}</small></span><button type="button" data-rm="${i}">✖</button></li>`).join('') ||
+    '<li class="hint">Nenhum feriado local. Adicione o feriado municipal da cidade deste escritório.</li>';
+  $$('#of-custom [data-rm]').forEach((b) =>
+    b.addEventListener('click', () => {
+      officeEdit.customHolidays.splice(Number(b.dataset.rm), 1);
+      renderOfficeCustom();
+    }),
+  );
+}
+
+$('#office-form').country.addEventListener('change', async (e) => {
+  officeEdit.country = e.target.value;
+  officeEdit.region = '';
+  officeEdit.timezone = '';
+  // Feriados locais pertencem a uma cidade de um país: ao trocar de país, saem.
+  if (officeEdit.customHolidays.length) {
+    toast(`${officeEdit.customHolidays.length} feriado(s) local(is) do país anterior removido(s).`);
+    officeEdit.customHolidays = [];
+  }
+  officeEdit.optionalHolidays = { carnaval: true, corpusChristi: true };
+  await loadCountryMeta(officeEdit.country);
+});
+$('#office-form').region.addEventListener('change', (e) => {
+  officeEdit.region = e.target.value;
+  officeEdit.regionName = countryMeta.regions[e.target.value] || '';
+});
+$('#office-form').timezone.addEventListener('change', (e) => (officeEdit.timezone = e.target.value));
+
+$('#of-preset').addEventListener('change', (e) => {
+  const p = countryMeta.presets.find((x) => x.id === e.target.value);
   if (!p) return;
-  for (const hd of p.holidays) if (!customHolidays.some((c) => c.date === hd.date)) customHolidays.push({ ...hd });
-  renderCustomHolidays();
+  for (const hd of p.holidays) if (!officeEdit.customHolidays.some((c) => c.date === hd.date)) officeEdit.customHolidays.push({ ...hd });
+  if (!$('#office-form').name.value) $('#office-form').name.value = p.name;
+  renderOfficeCustom();
   e.target.value = '';
-  toast(`Adicionados feriados de ${p.name}. Salve para aplicar.`);
 });
 
-$('#ch-add').addEventListener('click', () => {
-  const raw = $('#ch-date').value.trim();
-  const name = $('#ch-name').value.trim();
+$('#of-ch-add').addEventListener('click', () => {
+  const raw = $('#of-ch-date').value.trim();
+  const name = $('#of-ch-name').value.trim();
   const m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?$/.exec(raw);
   if (!m || !name) return toast('Use DD/MM ou DD/MM/AAAA e um nome.');
   const dd = m[1].padStart(2, '0');
   const mm = m[2].padStart(2, '0');
-  customHolidays.push({ date: m[3] ? `${m[3]}-${mm}-${dd}` : `${mm}-${dd}`, name, scope: $('#ch-scope').value });
-  $('#ch-date').value = $('#ch-name').value = '';
-  renderCustomHolidays();
+  officeEdit.customHolidays.push({ date: m[3] ? `${m[3]}-${mm}-${dd}` : `${mm}-${dd}`, name, scope: $('#of-ch-scope').value });
+  $('#of-ch-date').value = $('#of-ch-name').value = '';
+  renderOfficeCustom();
 });
 
-$('#geocode').addEventListener('click', async () => {
-  const q = $('#settings-form').officeAddress.value.trim();
+$('#of-geocode').addEventListener('click', async () => {
+  const q = $('#office-form').address.value.trim();
   if (!q) return;
   try {
     // Geocodificação gratuita via OpenStreetMap (Nominatim), feita no navegador.
     const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
     const [hit] = await res.json();
-    if (!hit) return toast('Endereço não encontrado. Tente ser mais específico ou use "Estou no escritório agora".');
-    officeDraft = { lat: Number(hit.lat), lng: Number(hit.lon), label: q };
-    renderOfficeInfo();
-    toast('Endereço encontrado. Salve para aplicar.');
+    if (!hit) return toast('Endereço não encontrado. Tente ser mais específico ou use a posição atual.');
+    officeEdit.location = { lat: Number(hit.lat), lng: Number(hit.lon), label: q };
+    renderOfficeLoc();
   } catch {
     toast('Falha ao procurar endereço.');
   }
 });
 
-$('#use-here').addEventListener('click', async () => {
+$('#of-here').addEventListener('click', async () => {
   try {
     const p = await getPosition();
-    officeDraft = { lat: p.lat, lng: p.lng, label: $('#settings-form').officeAddress.value.trim() || 'Posição registrada' };
-    renderOfficeInfo();
-    toast('Posição do escritório capturada. Salve para aplicar.');
+    officeEdit.location = { lat: p.lat, lng: p.lng, label: $('#office-form').address.value.trim() || 'Posição registrada' };
+    renderOfficeLoc();
   } catch (e) {
     toast(e.message);
   }
 });
 
+$('#of-save').addEventListener('click', async () => {
+  const f = $('#office-form');
+  if (!f.name.value.trim()) return toast('Dê um nome ao escritório.');
+  const body = {
+    ...officeEdit,
+    name: f.name.value.trim(),
+    radiusM: Number(f.radiusM.value) || 200,
+    optionalHolidays: Object.fromEntries(countryMeta.optional.map((o) => [o.key, $(`#of-optional [data-opt="${o.key}"]`).checked])),
+    primary: f.primary.checked,
+  };
+  try {
+    await api('/api/offices', { method: 'POST', body });
+    $('#office-dialog').close();
+    toast('Escritório salvo');
+    await load();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$('#office-add').addEventListener('click', () => openOffice(null));
+
 $('#settings-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
   const patch = {
-    country: f.country.value,
-    timezone: f.timezone.value.trim(),
     rules: { officePct: Number(f.officePct.value), maxHomeDays: Number(f.maxHomeDays.value) },
     reminder: {
       enabled: f.reminderEnabled.checked,
@@ -493,18 +761,10 @@ $('#settings-form').addEventListener('submit', async (e) => {
       weekdays: $$('input[name=wd]:checked', f).map((x) => Number(x.value)),
     },
     summaries: { weekly: f.weekly.checked, monthly: f.monthly.checked },
-    location: {
-      enabled: f.locationEnabled.checked,
-      office: officeDraft,
-      radiusM: Number(f.radiusM.value),
-      windowStart: f.windowStart.value,
-      windowEnd: f.windowEnd.value,
-    },
-    optionalHolidays: Object.fromEntries(S.meta.optionalHolidays[S.settings.country].map((o) => [o.key, $$('input[name=opt]:checked', f).some((x) => x.value === o.key)])),
-    customHolidays,
+    location: { enabled: f.locationEnabled.checked, windowStart: f.windowStart.value, windowEnd: f.windowEnd.value },
+    askOnTimezoneChange: f.askOnTimezoneChange.checked,
   };
-  if (patch.country !== S.settings.country) delete patch.timezone; // usa o fuso padrão do país
-  if (patch.location.enabled && !patch.location.office) return toast('Defina o endereço do escritório primeiro.');
+  if (patch.location.enabled && !S.settings.offices.some((o) => o.location)) return toast('Defina a localização de pelo menos um escritório primeiro.');
   try {
     await api('/api/settings', { method: 'PUT', body: patch });
     toast('Configurações salvas');
@@ -586,7 +846,7 @@ async function boot() {
   try {
     asked = sessionStorage.getItem(todayKey) === '1';
   } catch {}
-  if (loc.enabled && loc.office && S.today.workingDay && !S.today.record?.status && inLocationWindow() && (params.get('checkin') === 'location' || !asked)) {
+  if (loc.enabled && S.settings.offices.some((o) => o.location) && S.today.workingDay && !S.today.record?.status && inLocationWindow() && (params.get('checkin') === 'location' || !asked)) {
     try {
       sessionStorage.setItem(todayKey, '1');
     } catch {}
@@ -598,5 +858,5 @@ async function boot() {
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 boot().catch((e) => console.error(e));
-// Atualiza quando volta à app (ex.: respondeu pela notificação noutro momento)
+// Atualiza quando volta à app (ex.: respondeu pela notificação em outro momento)
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && S && load().catch(() => {}));
