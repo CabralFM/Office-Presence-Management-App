@@ -3,7 +3,7 @@
 
 const CACHE = 'presenca-v4';
 // Caminhos relativos ao service worker: funciona na raiz de um servidor e numa
-// subpasta de um site estático (ex.: GitHub Pages em /hello-world/).
+// subpasta de um site estático (ex.: GitHub Pages em /Office-Presence-Management-App/).
 const SHELL = ['./', './index.html', './styles.css', './app.js', './config.js', './icon.svg', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {

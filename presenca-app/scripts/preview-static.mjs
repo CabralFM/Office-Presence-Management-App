@@ -1,5 +1,5 @@
 // Pré-visualiza o site estático (dist/) como o GitHub Pages o serviria:
-// numa subpasta, ex.: http://localhost:4173/hello-world/
+// numa subpasta, ex.: http://localhost:4173/Office-Presence-Management-App/
 //
 //   npm run build:static && npm run preview:static
 
@@ -9,7 +9,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DIST = join(fileURLToPath(new URL('..', import.meta.url)), 'dist');
-const BASE = process.env.BASE || '/hello-world/';
+const BASE = process.env.BASE || '/Office-Presence-Management-App/';
 const PORT = Number(process.env.PORT) || 4173;
 const TYPES = {
   '.html': 'text/html; charset=utf-8',

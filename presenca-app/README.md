@@ -140,12 +140,12 @@ O GitHub Pages grátis só funciona em repositórios **públicos**. Só o **cód
 1. Junte a branch da app à `master` (GitHub → *Pull requests* → *New* → *Merge*).
 2. **Settings → General → Danger Zone → Change visibility → Public.**
 3. **Settings → Pages → Source: GitHub Actions.**
-4. Em **Actions**, o workflow *Publicar Presença* roda sozinho (ou clique em *Run workflow*). Em ~2 min a app fica em `https://<seu-usuario>.github.io/hello-world/`.
+4. Em **Actions**, o workflow *Publicar Presença* roda sozinho (ou clique em *Run workflow*). Em ~2 min a app fica em `https://cabralfm.github.io/Office-Presence-Management-App/` (o endereço exato aparece em **Settings → Pages**; use-o tal como está, com as maiúsculas).
 
 ### Opção B — Cloudflare Pages (o repositório continua privado)
 
 1. Crie conta grátis em <https://dash.cloudflare.com> (não pede cartão).
-2. **Workers & Pages → Create → Pages → Connect to Git →** autorize o GitHub e escolha `hello-world`.
+2. **Workers & Pages → Create → Pages → Connect to Git →** autorize o GitHub e escolha `Office-Presence-Management-App`.
 3. Configuração:
    - **Production branch:** `master` (ou a branch da app)
    - **Root directory:** `presenca-app`
@@ -176,7 +176,7 @@ O GitHub Pages grátis só funciona em repositórios **públicos**. Só o **cód
 cd presenca-app
 npm install
 npm run build:static
-npm run preview:static     # http://localhost:4173/hello-world/
+npm run preview:static     # http://localhost:4173/Office-Presence-Management-App/
 ```
 
 ## Modo servidor (opcional, pago)
@@ -199,7 +199,7 @@ Push e geolocalização **exigem HTTPS**, e o servidor tem de ficar **ligado 24 
 #### Railway (~5 US$/mês)
 
 1. Crie conta em <https://railway.com> entrando com o GitHub.
-2. **New Project → Deploy from GitHub repo →** `hello-world`.
+2. **New Project → Deploy from GitHub repo →** `Office-Presence-Management-App`.
 3. No serviço criado, em **Settings**:
    - **Source → Root Directory:** `presenca-app`
    - **Source → Branch:** `master` (depois de fazer merge do PR), ou a branch da app

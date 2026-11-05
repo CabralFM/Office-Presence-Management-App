@@ -4,7 +4,7 @@
 // "render a partir do estado": cada ação chama a API e volta a desenhar.
 
 // Caminhos relativos: a app funciona tanto na raiz de um servidor como numa
-// subpasta de um site estático (ex.: https://usuario.github.io/hello-world/).
+// subpasta de um site estático (ex.: https://usuario.github.io/Office-Presence-Management-App/).
 import { nearestOffice } from './core/geo.js';
 import { ABSENCE_TYPES, ABSENCE_LABEL, ABSENCE_ICON } from './core/absences.js';
 import { MODE } from './config.js';
