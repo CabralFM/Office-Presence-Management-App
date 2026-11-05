@@ -10,7 +10,8 @@ export const DEFAULT_SETTINGS = {
   trips: [],
   // Regra mãe: officePct dos dias trabalháveis. O teto absoluto de dias em casa
   // é opcional (enforceHomeCap) — ver src/core/compliance.js.
-  rules: { officePct: 50, maxHomeDays: 60, enforceHomeCap: false },
+  // startDate: início da contagem (ex.: data de admissão); null = sem limite.
+  rules: { officePct: 50, maxHomeDays: 60, enforceHomeCap: false, startDate: null },
   reminder: {
     enabled: true,
     time: '09:00',

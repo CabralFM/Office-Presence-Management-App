@@ -8,12 +8,14 @@
 // dois modos comportam-se exatamente igual — os mesmos testes cobrem ambos.
 
 import { CITY_PRESETS, holidayMap, listCountries, listRegions, optionalHolidaysFor, timezonesFor } from './holidays.js';
-import { addDays, parseSemesterId, semesterOf } from './dates.js';
+import { addDays, parseISO, parseSemesterId, semesterOf, toISO } from './dates.js';
 import { DEFAULT_OFFICE, expectedOffice, officeById, tripForDay, buildHolidayMap } from './offices.js';
 import { ABSENCE_TYPES, ABSENCE_LABEL, validateAbsence } from './absences.js';
 import { holidaysFor, isWorkingDay, localNow, semesterReport } from './report.js';
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Formato certo E data que existe (rejeita 2026-13-01, 2026-02-30…).
+const isDate = (x) => typeof x === 'string' && ISO_RE.test(x) && toISO(parseISO(x)) === x;
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const newId = () => globalThis.crypto.randomUUID().slice(0, 8);
 const ok = (data) => ({ status: 200, data: { ok: true, ...data } });
@@ -60,7 +62,7 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
 
     // ---- registro de dias ----------------------------------------------------
     ['PUT', /^\/api\/days\/([^/]+)$/, ([date], body) => {
-      if (!ISO_RE.test(date)) return fail(400, 'Data inválida');
+      if (!isDate(date)) return fail(400, 'Data inválida');
       const { status, plan, note, officeId, absenceType, justification } = body;
       if (officeId && !officeById(repo.getSettings(), officeId)) return fail(400, 'Escritório desconhecido');
       // Não faz sentido "registrar" presença no futuro: no futuro é planejamento.
@@ -97,7 +99,7 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
       const today = now().date;
       // A notificação leva a data a que se refere; se responder a um lembrete de
       // ontem já depois da meia-noite, registra no dia certo (mas nunca no futuro).
-      const target = ISO_RE.test(date || '') && date <= today ? date : today;
+      const target = isDate(date || '') && date <= today ? date : today;
       const day = repo.upsertDay(target, {
         status,
         source: ['manual', 'lembrete', 'localizacao'].includes(source) ? source : 'manual',
@@ -113,7 +115,7 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
     // local de trabalho) viram ausência — são esses que saem da base dos 50%.
     ['POST', /^\/api\/absences$/, (_m, body) => {
       const { start, end, type, justification = '', overwrite = false, replaceId } = body;
-      if (!ISO_RE.test(start || '') || !ISO_RE.test(end || '') || end < start) return fail(400, 'Datas inválidas');
+      if (!isDate(start || '') || !isDate(end || '') || end < start) return fail(400, 'Datas inválidas');
       if (addDays(start, 366) < end) return fail(400, 'Período longo demais (máx. 1 ano).');
       const err = validateAbsence({ type, justification });
       if (err) return fail(400, err);
@@ -208,7 +210,7 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
     ['POST', /^\/api\/trips$/, (_m, { officeId, start, end, note = '' }) => {
       const settings = repo.getSettings();
       if (!officeById(settings, officeId)) return fail(400, 'Escritório desconhecido');
-      if (!ISO_RE.test(start || '') || !ISO_RE.test(end || '') || end < start) return fail(400, 'Datas inválidas');
+      if (!isDate(start || '') || !isDate(end || '') || end < start) return fail(400, 'Datas inválidas');
       if (addDays(start, 92) < end) return fail(400, 'Viagem longa demais (máx. 3 meses).');
       const clash = settings.trips.find((t) => t.start <= end && start <= t.end);
       if (clash) return fail(400, `Conflita com outra viagem (${clash.start} a ${clash.end}).`);
@@ -259,6 +261,7 @@ export function validateSettingsPatch(p) {
     if (officePct !== undefined && !(Number.isInteger(officePct) && officePct >= 0 && officePct <= 100)) e.push('percentagem deve ser 0–100');
     if (maxHomeDays !== undefined && !(Number.isInteger(maxHomeDays) && maxHomeDays >= 0 && maxHomeDays <= 200)) e.push('máximo de dias em casa inválido');
     if (p.rules.enforceHomeCap !== undefined && typeof p.rules.enforceHomeCap !== 'boolean') e.push('enforceHomeCap deve ser verdadeiro/falso');
+    if (p.rules.startDate !== undefined && p.rules.startDate !== null && !isDate(p.rules.startDate)) e.push('data de início inválida');
   }
   if (p.reminder) {
     const r = p.reminder;
