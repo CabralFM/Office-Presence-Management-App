@@ -89,6 +89,7 @@ function showTab() {
   const id = (location.hash || '#painel').slice(1);
   $$('.tab').forEach((s) => (s.hidden = s.id !== id));
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === id));
+  $(`.tabs a[data-tab="${id}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 window.addEventListener('hashchange', showTab);
 
@@ -672,28 +673,59 @@ async function autoPlan() {
 }
 
 // ---------------------------------------------------------------- configurações
+// ---- campos de hora (listas em vez do relógio nativo) -------------------------
+const pad2 = (n) => String(n).padStart(2, '0');
+function initTimeFields() {
+  for (const el of $$('.time-field')) {
+    const n = el.dataset.name;
+    const hours = Array.from({ length: 24 }, (_, i) => `<option>${pad2(i)}</option>`).join('');
+    const mins = Array.from({ length: 12 }, (_, i) => `<option>${pad2(i * 5)}</option>`).join('');
+    el.innerHTML = `<select name="${n}H" aria-label="Hora">${hours}</select><b>:</b><select name="${n}M" aria-label="Minutos">${mins}</select>`;
+  }
+}
+function setTime(form, n, value) {
+  const [hh, mm] = String(value || '09:00').split(':');
+  form[`${n}H`].value = hh;
+  const sel = form[`${n}M`];
+  // Valor antigo fora dos múltiplos de 5 (ex.: 09:07): acrescenta-o para não o perder.
+  if (![...sel.options].some((o) => o.value === mm)) sel.add(new Option(mm, mm));
+  sel.value = mm;
+}
+const getTime = (form, n) => `${form[`${n}H`].value}:${form[`${n}M`].value}`;
+initTimeFields();
+
+// Alterações por salvar nos Ajustes: não as apagar quando a app recarrega os
+// dados (ex.: ao voltar de outra app). Só se repõem depois de salvar.
+let settingsDirty = false;
+for (const ev of ['input', 'change']) {
+  $('#settings-form').addEventListener(ev, (e) => {
+    if (e.target.id !== 'backup-import') settingsDirty = true;
+  });
+}
+
 function renderSettings() {
   const s = S.settings;
   const f = $('#settings-form');
+  renderOffices();
+  if (LOCAL) renderLocalCards();
+  else renderPushStatus();
+  if (settingsDirty) return;
   f.officePct.value = s.rules.officePct;
   f.maxHomeDays.value = s.rules.maxHomeDays;
   f.enforceHomeCap.checked = Boolean(s.rules.enforceHomeCap);
   f.maxHomeDays.disabled = !f.enforceHomeCap.checked;
   f.reminderEnabled.checked = s.reminder.enabled;
-  f.reminderTime.value = s.reminder.time;
+  setTime(f, 'reminderTime', s.reminder.time);
   f.repeatMinutes.value = s.reminder.repeatMinutes;
-  f.reminderUntil.value = s.reminder.until;
+  setTime(f, 'reminderUntil', s.reminder.until);
   f.weekly.checked = s.summaries.weekly;
   f.monthly.checked = s.summaries.monthly;
   $('.weekdays').innerHTML =
     '<legend>Dias</legend>' + [1, 2, 3, 4, 5].map((d) => `<label><input type="checkbox" name="wd" value="${d}" ${s.reminder.weekdays.includes(d) ? 'checked' : ''}/> ${DOW[d]}</label>`).join('');
   f.locationEnabled.checked = s.location.enabled;
-  f.windowStart.value = s.location.windowStart;
-  f.windowEnd.value = s.location.windowEnd;
+  setTime(f, 'windowStart', s.location.windowStart);
+  setTime(f, 'windowEnd', s.location.windowEnd);
   f.askOnTimezoneChange.checked = s.askOnTimezoneChange;
-  renderOffices();
-  if (LOCAL) renderLocalCards();
-  else renderPushStatus();
 }
 
 let regionNames = null;
@@ -714,7 +746,7 @@ function renderOffices() {
     .map((o) => {
       const primary = o.id === s.primaryOfficeId;
       return `<li><span><b>${h(o.name)}</b>${primary ? ' ⭐ principal' : ''}<br>
-        <small>${h(countryName(o.country))}${o.region ? ` · ${h(o.regionName || o.region)}` : ''} · ${h(o.timezone)} · ${o.location ? '📍 localização definida' : 'sem localização'} · ${o.customHolidays.length} feriado(s) local(is)</small></span>
+        <small>${h(countryName(o.country))}${o.region ? ` · ${h(o.regionName || o.region)}` : ''}${o.city ? ` · ${h(cityName(o))}` : ''} · ${h(o.timezone)} · ${o.location ? '📍 localização definida' : 'sem localização'}</small></span>
         <span class="actions"><button type="button" data-of-edit="${o.id}">Editar</button>${primary ? '' : `<button type="button" data-of-primary="${o.id}" title="Tornar principal">⭐</button><button type="button" data-of-del="${o.id}" title="Remover">✖</button>`}</span></li>`;
     })
     .join('');
@@ -756,6 +788,7 @@ async function openOffice(id, preset = {}) {
         radiusM: 200,
         optionalHolidays: { carnaval: true, corpusChristi: true },
         customHolidays: [],
+        city: '',
         ...preset,
       };
   const f = $('#office-form');
@@ -786,12 +819,70 @@ async function loadCountryMeta(country) {
   $('#of-optional').innerHTML =
     '<legend>Pontos facultativos concedidos</legend>' +
     countryMeta.optional.map((o) => `<label><input type="checkbox" data-opt="${o.key}" ${officeEdit.optionalHolidays?.[o.key] ? 'checked' : ''}/> ${h(o.name)}</label>`).join('');
-  $('#of-preset').innerHTML =
-    `<option value="">${countryMeta.presets.length ? 'Adicionar modelo de cidade…' : 'Sem modelos para este país — adicione abaixo'}</option>` +
-    countryMeta.presets.map((p) => `<option value="${p.id}">${h(p.name)}</option>`).join('');
+  // Escritórios antigos não tinham "city": deduz-se dos feriados já guardados.
+  if (!officeEdit.city) officeEdit.city = countryMeta.presets.find((p) => presetIn(p, officeEdit.customHolidays))?.id || '';
+  const hasCities = countryMeta.presets.length > 0;
+  $('#of-city-wrap').hidden = !hasCities;
+  $('#of-city').innerHTML =
+    '<option value="">— Nenhuma / outra cidade —</option>' + countryMeta.presets.map((p) => `<option value="${p.id}">${h(p.name)}</option>`).join('');
+  $('#of-city').value = officeEdit.city || '';
   renderOfficeLoc();
   renderOfficeCustom();
 }
+
+// ---- cidade (feriado municipal) e lista completa de feriados ---------------------
+const sameHoliday = (a, b) => a.date === b.date && a.name === b.name;
+const presetIn = (p, list) => p.holidays.every((hd) => list.some((c) => sameHoliday(c, hd)));
+const cityPreset = () => countryMeta?.presets.find((p) => p.id === officeEdit.city) || null;
+function cityName(o) {
+  for (const list of Object.values(S.meta.cityPresets || {})) {
+    const p = list.find((x) => x.id === o.city);
+    if (p) return p.name;
+  }
+  return o.city;
+}
+const fmtHol = (d) => (d.length === 5 ? `${d.slice(3)}/${d.slice(0, 2)}` : `${d.slice(8)}/${d.slice(5, 7)}/${d.slice(0, 4)}`);
+
+$('#of-city').addEventListener('change', (e) => {
+  const prev = cityPreset();
+  // Troca de cidade: saem os feriados da cidade anterior, entram os da nova.
+  if (prev) officeEdit.customHolidays = officeEdit.customHolidays.filter((c) => !prev.holidays.some((hd) => sameHoliday(c, hd)));
+  officeEdit.city = e.target.value;
+  const p = cityPreset();
+  if (p) {
+    for (const hd of p.holidays) if (!officeEdit.customHolidays.some((c) => sameHoliday(c, hd))) officeEdit.customHolidays.push({ ...hd });
+    if (!$('#office-form').name.value.trim()) $('#office-form').name.value = p.name;
+  }
+  renderOfficeCustom();
+});
+
+async function refreshHolidayPreview() {
+  const box = $('#of-all-holidays');
+  try {
+    const { year, holidays } = await api('/api/holidays/preview', {
+      method: 'POST',
+      body: {
+        country: officeEdit.country,
+        region: officeEdit.region,
+        optionalHolidays: Object.fromEntries((countryMeta?.optional || []).map((o) => [o.key, Boolean($(`#of-optional [data-opt="${o.key}"]`)?.checked)])),
+        customHolidays: officeEdit.customHolidays,
+        year: S.semester.year,
+      },
+    });
+    const workdays = holidays.filter((x) => !x.weekend).length;
+    box.querySelector('summary').textContent = `📅 Ver todos os feriados de ${year} deste escritório (${holidays.length}; ${workdays} em dias úteis)`;
+    const TYPE = { nacional: 'nacional', facultativo: 'facultativo', municipal: 'municipal', estadual: 'regional', empresa: 'empresa' };
+    box.querySelector('ul').innerHTML = holidays
+      .map((x) => {
+        const wd = DOW[new Date(x.date + 'T12:00:00Z').getUTCDay()];
+        return `<li class="${x.weekend ? 'weekend' : ''}"><span>${wd} ${fmtDM(x.date)} — ${h(x.name)}${x.weekend ? ' <small>(fim de semana)</small>' : ''}</span> <span class="tag">${TYPE[x.type] || x.type}</span></li>`;
+      })
+      .join('');
+  } catch (err) {
+    box.querySelector('summary').textContent = `Não foi possível calcular os feriados: ${err.message}`;
+  }
+}
+$('#of-optional').addEventListener('change', refreshHolidayPreview);
 
 function renderOfficeLoc() {
   const l = officeEdit.location;
@@ -799,16 +890,24 @@ function renderOfficeLoc() {
 }
 
 function renderOfficeCustom() {
-  const fmt = (d) => (d.length === 5 ? `${d.slice(3)}/${d.slice(0, 2)} (todo ano)` : `${d.slice(8)}/${d.slice(5, 7)}/${d.slice(0, 4)}`);
+  const p = cityPreset();
+  $('#of-city-hint').textContent = p
+    ? `Feriado(s) municipal(is) de ${p.name}: ${p.holidays.map((hd) => `${fmtHol(hd.date)} ${hd.name}`).join(', ')}.`
+    : countryMeta?.presets.length
+      ? 'Sem cidade escolhida: se a sua não estiver na lista, adicione o feriado municipal em "Outros feriados locais".'
+      : 'Não há lista de cidades para este país: adicione o feriado municipal em "Outros feriados locais".';
+  const fmt = (d) => (d.length === 5 ? `${fmtHol(d)} (todo ano)` : fmtHol(d));
+  const items = officeEdit.customHolidays.map((c, i) => ({ c, i })).filter(({ c }) => !p?.holidays.some((hd) => sameHoliday(c, hd)));
   $('#of-custom').innerHTML =
-    officeEdit.customHolidays.map((c, i) => `<li><span>${fmt(c.date)} — ${h(c.name)} <small>${c.scope}</small></span><button type="button" data-rm="${i}">✖</button></li>`).join('') ||
-    '<li class="hint">Nenhum feriado local. Adicione o feriado municipal da cidade deste escritório.</li>';
+    items.map(({ c, i }) => `<li><span>${fmt(c.date)} — ${h(c.name)} <small>${c.scope}</small></span><button type="button" data-rm="${i}">✖</button></li>`).join('') ||
+    '<li class="hint">Nenhum.</li>';
   $$('#of-custom [data-rm]').forEach((b) =>
     b.addEventListener('click', () => {
       officeEdit.customHolidays.splice(Number(b.dataset.rm), 1);
       renderOfficeCustom();
     }),
   );
+  refreshHolidayPreview();
 }
 
 $('#office-form').country.addEventListener('change', async (e) => {
@@ -820,23 +919,16 @@ $('#office-form').country.addEventListener('change', async (e) => {
     toast(`${officeEdit.customHolidays.length} feriado(s) local(is) do país anterior removido(s).`);
     officeEdit.customHolidays = [];
   }
+  officeEdit.city = '';
   officeEdit.optionalHolidays = { carnaval: true, corpusChristi: true };
   await loadCountryMeta(officeEdit.country);
 });
 $('#office-form').region.addEventListener('change', (e) => {
   officeEdit.region = e.target.value;
   officeEdit.regionName = countryMeta.regions[e.target.value] || '';
+  refreshHolidayPreview();
 });
 $('#office-form').timezone.addEventListener('change', (e) => (officeEdit.timezone = e.target.value));
-
-$('#of-preset').addEventListener('change', (e) => {
-  const p = countryMeta.presets.find((x) => x.id === e.target.value);
-  if (!p) return;
-  for (const hd of p.holidays) if (!officeEdit.customHolidays.some((c) => c.date === hd.date)) officeEdit.customHolidays.push({ ...hd });
-  if (!$('#office-form').name.value) $('#office-form').name.value = p.name;
-  renderOfficeCustom();
-  e.target.value = '';
-});
 
 $('#of-ch-add').addEventListener('click', () => {
   const raw = $('#of-ch-date').value.trim();
@@ -905,18 +997,21 @@ $('#settings-form').addEventListener('submit', async (e) => {
     rules: { officePct: Number(f.officePct.value), maxHomeDays: Number(f.maxHomeDays.value), enforceHomeCap: f.enforceHomeCap.checked },
     reminder: {
       enabled: f.reminderEnabled.checked,
-      time: f.reminderTime.value,
+      time: getTime(f, 'reminderTime'),
       repeatMinutes: Number(f.repeatMinutes.value),
-      until: f.reminderUntil.value,
+      until: getTime(f, 'reminderUntil'),
       weekdays: $$('input[name=wd]:checked', f).map((x) => Number(x.value)),
     },
     summaries: { weekly: f.weekly.checked, monthly: f.monthly.checked },
-    location: { enabled: f.locationEnabled.checked, windowStart: f.windowStart.value, windowEnd: f.windowEnd.value },
+    location: { enabled: f.locationEnabled.checked, windowStart: getTime(f, 'windowStart'), windowEnd: getTime(f, 'windowEnd') },
     askOnTimezoneChange: f.askOnTimezoneChange.checked,
   };
   if (patch.location.enabled && !S.settings.offices.some((o) => o.location)) return toast('Defina a localização de pelo menos um escritório primeiro.');
+  if (patch.reminder.until <= patch.reminder.time) return toast('"Parar às" tem de ser depois do primeiro lembrete.');
+  if (patch.location.windowEnd <= patch.location.windowStart) return toast('O fim da janela de localização tem de ser depois do início.');
   try {
     await api('/api/settings', { method: 'PUT', body: patch });
+    settingsDirty = false;
     toast('Configurações salvas');
     await load();
   } catch (err) {
@@ -1052,7 +1147,7 @@ function renderBackupInfo() {
 }
 
 $('#export-csv').addEventListener('click', async () => {
-  if (LOCAL) download(`presenca-${S.now.date}.csv`, (await localBackend).exportCsv(), 'text/csv;charset=utf-8');
+  if (LOCAL) await shareOrDownload(`presenca-${S.now.date}.csv`, (await localBackend).exportCsv(), 'text/csv');
   else location.href = 'api/export.csv';
 });
 

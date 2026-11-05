@@ -117,9 +117,9 @@
           </div>
           <label class="check server-only"><input type="checkbox" name="reminderEnabled" /> Lembrete diário até eu responder</label>
           <div class="grid3">
-            <label>Primeiro lembrete <input type="time" name="reminderTime" required /></label>
+            <label>Primeiro lembrete <span class="time-field" data-name="reminderTime"></span></label>
             <label>Repetir a cada (min) <input type="number" name="repeatMinutes" min="5" required /></label>
-            <label>Parar às <input type="time" name="reminderUntil" required /></label>
+            <label>Parar às <span class="time-field" data-name="reminderUntil"></span></label>
           </div>
           <fieldset class="weekdays"><legend>Dias</legend></fieldset>
           <label class="check server-only"><input type="checkbox" name="weekly" /> Resumo semanal (1º dia útil da semana)</label>
@@ -138,8 +138,8 @@
           <p class="hint">A localização é lida <b>uma única vez</b>, só dentro da janela abaixo, quando abrir a app ou tocar no lembrete. A app compara com <b>todos</b> os seus escritórios (reconhece se está no de Lisboa ou no do exterior). A distância é calculada no seu aparelho; as coordenadas não são enviadas nem salvas.</p>
           <label class="check"><input type="checkbox" name="locationEnabled" /> Usar localização para sugerir a resposta</label>
           <div class="grid2">
-            <label>Janela: início <input type="time" name="windowStart" /></label>
-            <label>Janela: fim <input type="time" name="windowEnd" /></label>
+            <label>Janela: início <span class="time-field" data-name="windowStart"></span></label>
+            <label>Janela: fim <span class="time-field" data-name="windowEnd"></span></label>
           </div>
           <label class="check"><input type="checkbox" name="askOnTimezoneChange" /> Perguntar se estou em viagem quando o fuso horário do aparelho for diferente do escritório previsto</label>
         </div>
@@ -208,8 +208,11 @@
       <p id="of-loc" class="hint"></p>
       <label>Raio (m) <input type="number" name="radiusM" min="50" max="5000" /></label>
       <fieldset id="of-optional"><legend>Pontos facultativos concedidos</legend></fieldset>
-      <h4>Feriados municipais / da empresa deste escritório</h4>
-      <select id="of-preset"><option value="">Adicionar modelo de cidade…</option></select>
+      <h4>Cidade do escritório</h4>
+      <label id="of-city-wrap">Cidade (para o feriado municipal) <select id="of-city"></select></label>
+      <p id="of-city-hint" class="hint"></p>
+      <h4>Outros feriados locais</h4>
+      <p class="hint">Feriados da empresa, estaduais/regionais ou de uma cidade que não está na lista acima.</p>
       <ul id="of-custom" class="list"></ul>
       <div class="row add-holiday">
         <input type="text" id="of-ch-date" placeholder="DD/MM ou DD/MM/AAAA" />
@@ -217,6 +220,10 @@
         <select id="of-ch-scope"><option value="municipal">Municipal</option><option value="estadual">Estadual/regional</option><option value="empresa">Empresa</option></select>
         <button type="button" id="of-ch-add">Adicionar</button>
       </div>
+      <details id="of-all-holidays" class="holiday-preview">
+        <summary></summary>
+        <ul class="list"></ul>
+      </details>
       <label class="check"><input type="checkbox" name="primary" /> Escritório principal (o seu local de trabalho habitual)</label>
       <div class="row end"><button value="cancel" formnovalidate>Cancelar</button><button type="button" id="of-save" class="primary">Salvar escritório</button></div>
     </form>
