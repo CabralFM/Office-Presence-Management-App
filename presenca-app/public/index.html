@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1f6feb" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Presença</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icon.svg" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><img src="/icon.svg" alt="" width="28" height="28" /> Presença</div>
+    <select id="semester-select" aria-label="Semestre"></select>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <a href="#painel" data-tab="painel">Painel</a>
+    <a href="#calendario" data-tab="calendario">Calendário</a>
+    <a href="#planejamento" data-tab="planejamento">Planejamento</a>
+    <a href="#config" data-tab="config">Ajustes</a>
+  </nav>
+
+  <main>
+    <!-- LOGIN -->
+    <section id="login" hidden>
+      <div class="card narrow">
+        <h2>Entrar</h2>
+        <form id="login-form">
+          <label>Senha <input type="password" name="password" autocomplete="current-password" required /></label>
+          <button class="primary">Entrar</button>
+          <p class="error" id="login-error"></p>
+        </form>
+      </div>
+    </section>
+
+    <!-- PAINEL -->
+    <section id="painel" class="tab" hidden>
+      <div class="card today" id="today-card"></div>
+      <div class="card" id="semester-card"></div>
+      <div class="card"><h3>Avisos</h3><ul class="alerts" id="alerts"></ul></div>
+      <div class="card"><h3>Mês a mês</h3><div class="table-wrap"><table id="months-table"></table></div></div>
+    </section>
+
+    <!-- CALENDÁRIO -->
+    <section id="calendario" class="tab" hidden>
+      <div class="card">
+        <div class="legend">
+          <span class="chip office">Escritório</span><span class="chip home">Casa</span>
+          <span class="chip absence">Ausência</span><span class="chip holiday">Feriado</span>
+          <span class="chip pending">Sem registro</span><span class="chip planned">Planejado</span>
+        </div>
+        <p class="hint">Toque num dia para registrar (passado/hoje) ou planejar (futuro).</p>
+      </div>
+      <div id="calendar"></div>
+    </section>
+
+    <!-- PLANEJAMENTO -->
+    <section id="planejamento" class="tab" hidden>
+      <div class="card" id="plan-summary"></div>
+      <div class="card">
+        <h3>Semanas</h3>
+        <p class="hint">"Recomendado" distribui os dias de escritório que faltam pelas semanas restantes, proporcional aos dias úteis de cada uma (semanas com feriado pedem menos). Use os botões para planejar.</p>
+        <div id="weeks"></div>
+      </div>
+    </section>
+
+    <!-- CONFIGURAÇÕES -->
+    <section id="config" class="tab" hidden>
+      <form id="settings-form">
+        <div class="card">
+          <h3>Regra da empresa</h3>
+          <div class="grid2">
+            <label>% mínima no escritório <input type="number" name="officePct" min="0" max="100" required /></label>
+            <label>Máx. dias em casa / semestre <input type="number" name="maxHomeDays" min="0" max="200" required /></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Lembretes</h3>
+          <p id="push-status" class="hint"></p>
+          <div class="row">
+            <button type="button" id="push-enable" class="primary">Ativar notificações neste dispositivo</button>
+            <button type="button" id="push-test">Enviar teste</button>
+          </div>
+          <label class="check"><input type="checkbox" name="reminderEnabled" /> Lembrete diário até eu responder</label>
+          <div class="grid3">
+            <label>Primeiro lembrete <input type="time" name="reminderTime" required /></label>
+            <label>Repetir a cada (min) <input type="number" name="repeatMinutes" min="5" required /></label>
+            <label>Parar às <input type="time" name="reminderUntil" required /></label>
+          </div>
+          <fieldset class="weekdays"><legend>Dias</legend></fieldset>
+          <label class="check"><input type="checkbox" name="weekly" /> Resumo semanal (1º dia útil da semana)</label>
+          <label class="check"><input type="checkbox" name="monthly" /> Resumo mensal (1º dia útil do mês)</label>
+        </div>
+
+        <div class="card">
+          <h3>Check-in por localização (opcional)</h3>
+          <p class="hint">A localização é lida <b>uma única vez</b>, só dentro da janela abaixo, quando abrir a app ou tocar no lembrete. A distância é calculada no seu aparelho; as coordenadas não são enviadas nem salvas. Depois de responder, a localização não é mais usada naquele dia.</p>
+          <label class="check"><input type="checkbox" name="locationEnabled" /> Usar localização para sugerir a resposta</label>
+          <label>Endereço do escritório
+            <div class="row"><input type="text" name="officeAddress" placeholder="Ex.: Av. Paulista, 1000, São Paulo" /><button type="button" id="geocode">Procurar</button></div>
+          </label>
+          <div class="row"><button type="button" id="use-here">Estou no escritório agora — usar esta posição</button></div>
+          <p id="office-info" class="hint"></p>
+          <div class="grid3">
+            <label>Raio (m) <input type="number" name="radiusM" min="50" max="5000" /></label>
+            <label>Janela: início <input type="time" name="windowStart" /></label>
+            <label>Janela: fim <input type="time" name="windowEnd" /></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Feriados</h3>
+          <div class="grid2">
+            <label>País <select name="country"></select></label>
+            <label>Fuso horário <input type="text" name="timezone" /></label>
+          </div>
+          <fieldset id="optional-holidays"><legend>Pontos facultativos concedidos pela empresa</legend></fieldset>
+          <h4>Feriados municipais / estaduais / da empresa</h4>
+          <div class="row">
+            <select id="preset-select"><option value="">Adicionar modelo de cidade…</option></select>
+          </div>
+          <ul id="custom-holidays" class="list"></ul>
+          <div class="row add-holiday">
+            <input type="text" id="ch-date" placeholder="DD/MM ou DD/MM/AAAA" />
+            <input type="text" id="ch-name" placeholder="Nome" />
+            <select id="ch-scope"><option value="municipal">Municipal</option><option value="estadual">Estadual</option><option value="empresa">Empresa</option></select>
+            <button type="button" id="ch-add">Adicionar</button>
+          </div>
+          <p class="hint">DD/MM repete todos os anos; DD/MM/AAAA vale só naquele ano (ex.: ponte decretada).</p>
+        </div>
+
+        <div class="card row sticky-actions">
+          <button class="primary">Salvar configurações</button>
+          <a href="/api/export.csv" class="button">Exportar CSV</a>
+          <button type="button" id="logout" hidden>Sair</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="day-dialog">
+    <form method="dialog">
+      <h3 id="dd-title"></h3>
+      <p id="dd-sub" class="hint"></p>
+      <div class="choice" id="dd-buttons"></div>
+      <label>Nota <input type="text" id="dd-note" placeholder="opcional" /></label>
+      <div class="row end"><button value="cancel">Fechar</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
