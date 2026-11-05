@@ -1,0 +1,26 @@
+{
+  "name": "presenca-app",
+  "version": "1.0.0",
+  "description": "Gestão de presença no escritório vs. home office, com lembretes, check-in por localização e controlo da regra dos 50% por semestre.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "build:static": "node scripts/build-static.mjs",
+    "preview:static": "node scripts/preview-static.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "date-holidays": "^3.38.0",
+    "express": "^5.3.0",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  }
+}
