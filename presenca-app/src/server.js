@@ -19,6 +19,9 @@ const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
   const app = express();
+  // Atrás do HTTPS do provedor (Railway, Fly, Nginx…): confia no cabeçalho
+  // X-Forwarded-Proto, para o cookie de login sair com a flag Secure.
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '200kb' }));
 
   // ---- autenticação opcional --------------------------------------------------

@@ -128,7 +128,21 @@ Em `localhost` as notificações e a localização funcionam no Chrome/Edge/Fire
 
 ## Publicar (para receber lembretes no celular)
 
-Push e geolocalização **exigem HTTPS**. Opções simples:
+Push e geolocalização **exigem HTTPS**, e o servidor tem de ficar **ligado 24 h** (é ele que envia o lembrete das 9h). Por isso, planos gratuitos que "adormecem" o servidor (ex.: Render free) **não servem**.
+
+### Passo a passo recomendado: Railway (~5 US$/mês)
+
+1. Crie conta em <https://railway.com> entrando com o GitHub.
+2. **New Project → Deploy from GitHub repo →** `hello-world`.
+3. No serviço criado, em **Settings**:
+   - **Source → Root Directory:** `presenca-app`
+   - **Source → Branch:** `master` (depois de fazer merge do PR), ou a branch da app
+   - **Networking → Generate Domain** → dá um endereço `https://….up.railway.app`
+4. **Variables:** `APP_PASSWORD` = uma senha forte; `VAPID_SUBJECT` = `mailto:seu-email`.
+5. **Volume:** clique com o botão direito no serviço → *Attach volume* → **Mount path** `/app/data`. *Sem isto, perde todos os dados a cada atualização.*
+6. Espere o deploy ficar verde e abra o domínio: deve aparecer a tela de login.
+
+### Outras opções
 
 1. **Docker** em qualquer VPS (com Caddy/Nginx fornecendo HTTPS):
    ```bash
@@ -136,7 +150,7 @@ Push e geolocalização **exigem HTTPS**. Opções simples:
    docker run -d -p 3000:3000 -v presenca-data:/app/data \
      -e APP_PASSWORD='uma-senha-forte' -e VAPID_SUBJECT='mailto:voce@exemplo.com' presenca
    ```
-2. **Render / Railway / Fly.io**: aponte para esta pasta, comando `npm start`, e **adicione um disco persistente montado em `/app/data`** (senão perde os dados a cada deploy).
+2. **Fly.io** (ou outro PaaS sem "adormecer"): aponte para esta pasta, comando `npm start`, e **adicione um disco persistente montado em `/app/data`** (senão perde os dados a cada deploy).
 
 Variáveis de ambiente (ver `.env.example`):
 
