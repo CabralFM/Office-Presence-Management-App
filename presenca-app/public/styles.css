@@ -15,8 +15,14 @@ h2, h3, h4 { margin: 0 0 10px; } h4 { margin-top: 16px; }
 .top { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
 .top select { width: auto; max-width: 52%; }
 .brand { display: flex; gap: 8px; align-items: center; font-weight: 700; font-size: 18px; }
-.tabs { display: flex; gap: 4px; padding: 8px 16px; overflow-x: auto; background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 53px; z-index: 4; }
-.tabs a { padding: 6px 12px; border-radius: 999px; color: var(--muted); text-decoration: none; white-space: nowrap; }
+/* As 4 abas dividem a largura toda; em telas estreitas a letra encolhe um pouco.
+   Se mesmo assim não couberem (letra do sistema muito grande), a barra rola e a
+   aba ativa é trazida para a vista (ver showTab em app.js). */
+.tabs { display: flex; gap: 4px; padding: 8px; overflow-x: auto; background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 53px; z-index: 4; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs a { flex: 1 0 auto; text-align: center; padding: 6px 10px; border-radius: 999px; color: var(--muted); text-decoration: none; white-space: nowrap; }
+@media (max-width: 400px) { .tabs { gap: 2px; padding: 6px; } .tabs a { padding: 6px 7px; font-size: 14px; } }
+@media (max-width: 340px) { .tabs a { padding: 6px 5px; font-size: 13px; } }
 .tabs a.active { background: var(--primary); color: #fff; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
 .card.narrow { max-width: 360px; margin: 40px auto; }
@@ -125,6 +131,15 @@ label.inline { display: flex; gap: 8px; align-items: center; } label.inline sele
 .list li small { color: var(--muted); }
 .list li .actions { display: flex; gap: 4px; flex-shrink: 0; }
 dialog { max-height: 92vh; overflow-y: auto; }
+/* Hora em duas listas (hora : minutos) em vez do relógio nativo do Android,
+   que em alguns celulares (letra grande) aparece com o botão OK cortado. */
+.time-field { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.time-field select { flex: 1; min-width: 0; }
+.holiday-preview { margin: 12px 0; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.holiday-preview summary { cursor: pointer; font-weight: 600; color: var(--primary); }
+.holiday-preview li { font-size: 14px; }
+.holiday-preview li.weekend { color: var(--muted); }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
 textarea { font: inherit; color: inherit; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); margin-top: 4px; resize: vertical; }
 fieldset.types { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
 fieldset.types label { display: flex; gap: 8px; align-items: center; margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }

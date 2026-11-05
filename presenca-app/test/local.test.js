@@ -130,3 +130,26 @@ test('link do Google Agenda: evento recorrente seg–sex às 9h', () => {
   assert.equal(url.searchParams.get('dates'), '20261105T090000Z/20261105T091500Z');
   assert.equal(url.searchParams.get('ctz'), 'Europe/Lisbon');
 });
+
+test('lista completa de feriados do escritório (Lisboa, 2026) e cidade guardada', () => {
+  const { call } = setup();
+  const r = call('POST', '/api/holidays/preview', {
+    country: 'PT',
+    optionalHolidays: { carnaval: true },
+    customHolidays: [{ date: '06-13', name: 'Santo António', scope: 'municipal' }],
+    year: 2026,
+  });
+  assert.equal(r.status, 200);
+  const byDate = Object.fromEntries(r.data.holidays.map((x) => [x.date, x]));
+  assert.equal(byDate['2026-06-13'].name, 'Santo António');
+  assert.equal(byDate['2026-06-13'].weekend, true); // sábado em 2026
+  assert.equal(byDate['2026-02-17'].type, 'facultativo'); // Carnaval
+  assert.equal(byDate['2026-06-10'].type, 'nacional');
+  assert.ok(!byDate['2026-06-24'], 'São João (Almada) não entra');
+  assert.equal(r.data.holidays.length, 15); // 13 nacionais (inclui Páscoa) + Carnaval + Santo António
+
+  const saved = call('POST', '/api/offices', { id: 'principal', name: 'Lisboa', country: 'PT', city: 'lisboa' });
+  assert.equal(saved.data.office.city, 'lisboa');
+  assert.equal(call('GET', '/api/state').data.settings.offices[0].city, 'lisboa');
+  assert.equal(call('POST', '/api/offices', { name: 'X', country: 'PT', city: 'x'.repeat(41) }).status, 400);
+});

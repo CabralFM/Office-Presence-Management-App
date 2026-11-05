@@ -22,6 +22,7 @@ export const DEFAULT_OFFICE = {
   name: 'Escritório principal',
   country: 'BR',
   region: '',
+  city: '', // id do modelo de cidade (feriado municipal), ex.: 'lisboa'
   timezone: COUNTRIES.BR.timezone,
   location: null, // { lat, lng, label }
   radiusM: 200,

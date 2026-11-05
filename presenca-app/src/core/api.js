@@ -7,7 +7,7 @@
 // Assim as regras (validações, ausências, viagens…) existem num só sítio e os
 // dois modos comportam-se exatamente igual — os mesmos testes cobrem ambos.
 
-import { CITY_PRESETS, listCountries, listRegions, optionalHolidaysFor, timezonesFor } from './holidays.js';
+import { CITY_PRESETS, holidayMap, listCountries, listRegions, optionalHolidaysFor, timezonesFor } from './holidays.js';
 import { addDays, parseSemesterId, semesterOf } from './dates.js';
 import { DEFAULT_OFFICE, expectedOffice, officeById, tripForDay, buildHolidayMap } from './offices.js';
 import { ABSENCE_TYPES, ABSENCE_LABEL, validateAbsence } from './absences.js';
@@ -53,7 +53,7 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
             expectedOfficeId: expectedOffice(settings, n.date).id,
             trip: tripForDay(settings, n.date),
           },
-          meta: { countries: countryNames(), absenceTypes: ABSENCE_TYPES, ...extraMeta() },
+          meta: { countries: countryNames(), absenceTypes: ABSENCE_TYPES, cityPresets: CITY_PRESETS, ...extraMeta() },
         },
       };
     }],
@@ -159,7 +159,7 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
       const office = {
         ...DEFAULT_OFFICE,
         ...(existing || {}),
-        ...pick(o, ['name', 'country', 'region', 'regionName', 'timezone', 'location', 'radiusM', 'optionalHolidays', 'customHolidays']),
+        ...pick(o, ['name', 'country', 'region', 'regionName', 'city', 'timezone', 'location', 'radiusM', 'optionalHolidays', 'customHolidays']),
         id: existing ? o.id : newId(),
       };
       if (!office.timezone) office.timezone = timezonesFor(office.country)[0] || 'UTC';
@@ -168,6 +168,27 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
       if (o.primary) patch.primaryOfficeId = office.id;
       repo.updateSettings(patch);
       return ok({ office });
+    }],
+
+    /**
+     * Todos os feriados de um escritório num ano (nacionais, regionais,
+     * facultativos ligados, municipais e da empresa) — para o diálogo do
+     * escritório mostrar a lista completa ANTES de salvar.
+     */
+    ['POST', /^\/api\/holidays\/preview$/, (_m, o) => {
+      if (!countryNames()[o.country]) return fail(400, 'país inválido');
+      const year = Number.isInteger(o.year) && o.year > 1900 && o.year < 2200 ? o.year : Number(now().date.slice(0, 4));
+      const map = holidayMap(
+        { country: o.country, region: o.region || '', optionalHolidays: o.optionalHolidays || {}, customHolidays: Array.isArray(o.customHolidays) ? o.customHolidays : [] },
+        [year],
+      );
+      const holidays = [...map]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, h]) => {
+          const wd = new Date(date + 'T12:00:00Z').getUTCDay();
+          return { date, name: h.name, type: h.type, weekend: wd === 0 || wd === 6 };
+        });
+      return { status: 200, data: { year, holidays } };
     }],
 
     ['DELETE', /^\/api\/offices\/([^/]+)$/, ([id]) => {
@@ -265,6 +286,7 @@ export function validateOffice(o) {
     }
   }
   if (o.radiusM !== undefined && !(Number.isFinite(o.radiusM) && o.radiusM >= 50 && o.radiusM <= 5000)) e.push('raio deve estar entre 50 e 5000 m');
+  if (o.city !== undefined && o.city !== null && !(typeof o.city === 'string' && o.city.length <= 40)) e.push('cidade inválida');
   if (o.location && !(Number.isFinite(o.location.lat) && Number.isFinite(o.location.lng))) e.push('coordenadas inválidas');
   if (o.customHolidays !== undefined) {
     if (!Array.isArray(o.customHolidays)) e.push('feriados locais inválidos');
