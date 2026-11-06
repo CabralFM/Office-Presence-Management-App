@@ -6,6 +6,8 @@
 // Caminhos relativos: a app funciona tanto na raiz de um servidor como numa
 // subpasta de um site estático (ex.: https://usuario.github.io/Office-Presence-Management-App/).
 import { assessPosition } from './core/geo.js';
+import { nowInTimeZone } from './core/dates.js';
+import { isBackupDue, APPS_SCRIPT_URL_RE } from './core/backup.js';
 import { ABSENCE_TYPES, ABSENCE_LABEL, ABSENCE_ICON } from './core/absences.js';
 import { MODE } from './config.js';
 
@@ -264,7 +266,9 @@ function renderTzBanner() {
 // As coordenadas nunca saem do aparelho nem são guardadas.
 function inLocationWindow() {
   const loc = S.settings.location;
-  const m = S.now.minutes;
+  // Hora exata DESTE momento (não a da última atualização da tela): se a app
+  // ficou aberta desde as 10h29, um toque às 15h já está fora da janela.
+  const m = nowInTimeZone(S.now.timezone).minutes;
   const toMin = (x) => Number(x.slice(0, 2)) * 60 + Number(x.slice(3, 5));
   return m >= toMin(loc.windowStart) && m <= toMin(loc.windowEnd);
 }
@@ -287,8 +291,20 @@ function readPosition(opts) {
   });
 }
 
+// Teto absoluto de uma verificação: nunca mais de 2 minutos com a localização
+// em uso. (Na prática são no máximo 40 s: 10 s pela rede + 30 s pelo GPS.)
+const GEO_MAX_MS = 120_000;
+
 /** Leitura rápida primeiro; GPS só se a rápida for imprecisa (ou falhar). */
-async function getPosition(onProgress = () => {}) {
+function getPosition(onProgress = () => {}) {
+  let timer;
+  const cap = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error(GEO_ERRORS[3]), { code: 3 })), GEO_MAX_MS);
+  });
+  return Promise.race([readBestPosition(onProgress), cap]).finally(() => clearTimeout(timer));
+}
+
+async function readBestPosition(onProgress) {
   let best = null;
   let lastErr = null;
   try {
@@ -814,8 +830,11 @@ function renderSettings() {
   const s = S.settings;
   const f = $('#settings-form');
   renderOffices();
-  if (LOCAL) renderLocalCards();
-  else renderPushStatus();
+  if (LOCAL) {
+    renderLocalCards();
+    renderBackupInfo();
+    renderBackupDue();
+  } else renderPushStatus();
   if (settingsDirty) return;
   f.officePct.value = s.rules.officePct;
   f.startDate.value = s.rules.startDate || '';
@@ -834,6 +853,10 @@ function renderSettings() {
   setTime(f, 'windowStart', s.location.windowStart);
   setTime(f, 'windowEnd', s.location.windowEnd);
   f.askOnTimezoneChange.checked = s.askOnTimezoneChange;
+  f.backupFrequency.value = s.backup.frequency;
+  f.backupUrl.value = s.backup.autoUrl;
+  f.backupToken.value = s.backup.autoToken;
+  f.backupEmail.checked = s.backup.email;
 }
 
 let regionNames = null;
@@ -1126,6 +1149,12 @@ $('#settings-form').addEventListener('submit', async (e) => {
     summaries: { weekly: f.weekly.checked, monthly: f.monthly.checked },
     location: { enabled: f.locationEnabled.checked, windowStart: getTime(f, 'windowStart'), windowEnd: getTime(f, 'windowEnd') },
     askOnTimezoneChange: f.askOnTimezoneChange.checked,
+    backup: {
+      frequency: f.backupFrequency.value,
+      autoUrl: f.backupUrl.value.trim(),
+      autoToken: f.backupToken.value.trim(),
+      email: f.backupEmail.checked,
+    },
   };
   if (patch.location.enabled && !S.settings.offices.some((o) => o.location)) return toast('Defina a localização de pelo menos um escritório primeiro.');
   if (patch.reminder.until <= patch.reminder.time) return toast('"Parar às" tem de ser depois do primeiro lembrete.');
@@ -1237,14 +1266,6 @@ $('#cal-ics').addEventListener('click', async () => {
 $('#cal-google').addEventListener('click', async () => {
   window.open((await localBackend).googleLink(), '_blank', 'noopener');
 });
-$('#backup-export').addEventListener('click', async () => {
-  const text = (await localBackend).exportBackup();
-  await shareOrDownload(`presenca-copia-${S.now.date}.json`, text, 'application/json');
-  try {
-    localStorage.setItem('presenca:lastBackup', S.now.date);
-  } catch {}
-  renderBackupInfo();
-});
 $('#backup-import').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
@@ -1259,13 +1280,108 @@ $('#backup-import').addEventListener('change', async (e) => {
   }
 });
 
-function renderBackupInfo() {
-  let last = null;
+// ---- cópias de segurança periódicas -------------------------------------------
+const fmtFullDate = (iso) => `${fmtDM(iso)}/${iso.slice(0, 4)}`;
+let autoBackupFailed = null; // mensagem do último envio automático falhado (nesta sessão)
+
+/** Partilha a cópia (.json + .csv) pela folha de partilha; se não der, descarrega. */
+async function shareBackup() {
+  const b = (await localBackend).backupBundle();
+  const files = [
+    new File([b.json], `${b.filename}.json`, { type: 'application/json' }),
+    new File([b.csv], `${b.filename}.csv`, { type: 'text/csv' }),
+  ];
   try {
-    last = localStorage.getItem('presenca:lastBackup');
-  } catch {}
-  $('#backup-info').textContent = last ? `Última cópia: ${fmtDM(last)}/${last.slice(0, 4)}.` : 'Ainda não fez nenhuma cópia de segurança.';
+    if (navigator.canShare?.({ files })) {
+      await navigator.share({ files, title: 'Presença — cópia de segurança', text: b.summary });
+      await markBackupDone();
+      toast('💾 Cópia partilhada.');
+      return;
+    }
+  } catch (e) {
+    if (e?.name === 'AbortError') return; // cancelou: a cópia continua pendente
+  }
+  download(`${b.filename}.json`, b.json, 'application/json');
+  download(`${b.filename}.csv`, b.csv, 'text/csv');
+  await markBackupDone();
+  toast('💾 Cópia descarregada (.json e .csv). Guarde-a no Drive ou envie-a por e-mail.');
 }
+
+/**
+ * Envia a cópia para o Google Apps Script do usuário (Drive + e-mail).
+ * Pedido "simples" (texto, sem cabeçalhos extra) para o navegador o aceitar
+ * sem pedido prévio de permissão (CORS).
+ */
+async function sendAutoBackup({ url, token, email, silent = false }) {
+  const b = (await localBackend).backupBundle();
+  let res;
+  try {
+    const r = await fetch(url, { method: 'POST', body: JSON.stringify({ token, email, filename: b.filename, json: b.json, csv: b.csv, summary: b.summary }) });
+    res = await r.json();
+  } catch {
+    res = { ok: false, error: 'Não foi possível contactar o script (sem internet, ou endereço/implantação errados).' };
+  }
+  if (res.ok) {
+    autoBackupFailed = null;
+    await markBackupDone();
+    toast(`☁️ Cópia guardada no Google Drive${res.emailed ? ' e enviada por e-mail' : ''}.`);
+  } else {
+    autoBackupFailed = res.error || 'Erro desconhecido.';
+    if (!silent) toast(`Cópia automática falhou: ${autoBackupFailed}`);
+    renderBackupDue();
+  }
+  return res;
+}
+
+async function markBackupDone() {
+  await api('/api/settings', { method: 'PUT', body: { backup: { lastAt: S.now.date } } });
+  try {
+    localStorage.removeItem('presenca:lastBackup'); // formato antigo
+  } catch {}
+  await load();
+}
+
+function renderBackupInfo() {
+  const bk = S.settings.backup;
+  const auto = bk.autoUrl ? ' Cópia automática para o Google: ligada.' : '';
+  $('#backup-info').textContent = bk.lastAt
+    ? `Última cópia: ${fmtFullDate(bk.lastAt)}.${isBackupDue(bk, S.now.date) ? ' ⚠️ Está na hora de uma nova.' : ''}${auto}`
+    : `Ainda não fez nenhuma cópia de segurança.${auto}`;
+}
+
+/** Aviso no Painel quando a cópia está atrasada (ou a automática falhou). */
+function renderBackupDue() {
+  const el = $('#backup-due');
+  if (!el || !LOCAL) return;
+  const bk = S.settings.backup;
+  const due = isBackupDue(bk, S.now.date);
+  if (!due && !autoBackupFailed) {
+    el.hidden = true;
+    return;
+  }
+  const freq = { weekly: 'semanal', monthly: 'mensal' }[bk.frequency] || '';
+  const last = bk.lastAt ? `Última: ${fmtFullDate(bk.lastAt)}.` : 'Ainda não fez nenhuma.';
+  el.hidden = false;
+  el.innerHTML = `<div class="geo-result error-box">💾 <b>${autoBackupFailed ? 'A cópia automática para o Google falhou.' : `Cópia ${freq} de segurança pendente.`}</b> ${h(last)}
+      ${autoBackupFailed ? `<br><small>${h(autoBackupFailed)}</small>` : '<br><small>Os seus dados só existem neste celular: guarde uma cópia no Drive ou no e-mail.</small>'}
+      <div class="row"><button id="backup-due-share" class="primary">💾 Enviar cópia agora</button>${bk.autoUrl ? '<button id="backup-due-retry">☁️ Tentar o Google de novo</button>' : ''}</div></div>`;
+  $('#backup-due-share').onclick = shareBackup;
+  $('#backup-due-retry')?.addEventListener('click', () => sendAutoBackup({ url: bk.autoUrl, token: bk.autoToken, email: bk.email }));
+}
+
+$('#backup-export').addEventListener('click', shareBackup);
+$('#backup-auto-now').addEventListener('click', async () => {
+  const f = $('#settings-form');
+  const url = f.backupUrl.value.trim();
+  const token = f.backupToken.value.trim();
+  if (!APPS_SCRIPT_URL_RE.test(url)) return toast('O endereço tem de ser https://script.google.com/macros/s/…/exec');
+  if (!token) return toast('Cole a chave secreta (passo 2 das instruções).');
+  $('#backup-auto-info').textContent = 'A enviar…';
+  const r = await sendAutoBackup({ url, token, email: f.backupEmail.checked });
+  $('#backup-auto-info').textContent = r.ok
+    ? `✅ Funciona! Cópia guardada no Drive${r.emailed ? ' e enviada por e-mail' : ''}. Não se esqueça de Salvar configurações.`
+    : `❌ ${r.error}`;
+});
 
 $('#export-csv').addEventListener('click', async () => {
   if (LOCAL) await shareOrDownload(`presenca-${S.now.date}.csv`, (await localBackend).exportCsv(), 'text/csv');
@@ -1305,7 +1421,24 @@ async function boot() {
     else if (fromLink) toast(`A verificação por localização só funciona entre ${loc.windowStart} e ${loc.windowEnd}. Registre pelos botões.`);
   }
   if (params.has('checkin')) history.replaceState(null, '', location.pathname + location.hash);
-  if (LOCAL) renderBackupInfo();
+  if (LOCAL) await backupOnOpen();
+}
+
+/** Ao abrir a app: se a cópia estiver atrasada e a automática ligada, envia-a. */
+async function backupOnOpen() {
+  // Versões anteriores guardavam a data da última cópia fora dos dados.
+  let old = null;
+  try {
+    old = localStorage.getItem('presenca:lastBackup');
+  } catch {}
+  if (old && !S.settings.backup.lastAt) {
+    await api('/api/settings', { method: 'PUT', body: { backup: { lastAt: old } } });
+    await load();
+  }
+  const bk = S.settings.backup;
+  if (bk.autoUrl && bk.autoToken && isBackupDue(bk, S.now.date) && navigator.onLine !== false) {
+    await sendAutoBackup({ url: bk.autoUrl, token: bk.autoToken, email: bk.email, silent: true });
+  }
 }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');

@@ -40,6 +40,7 @@
     <!-- PAINEL -->
     <section id="painel" class="tab" hidden>
       <div class="card today" id="today-card"></div>
+      <div class="card" id="backup-due" hidden></div>
       <div class="card" id="semester-card"></div>
       <div class="card"><h3>Avisos</h3><ul class="alerts" id="alerts"></ul></div>
       <div class="card"><h3>Mês a mês</h3><div class="table-wrap"><table id="months-table"></table></div></div>
@@ -139,7 +140,7 @@
 
         <div class="card">
           <h3>Check-in por localização (opcional)</h3>
-          <p class="hint">A localização é lida <b>uma única vez</b>, só dentro da janela abaixo, quando abrir a app ou tocar no lembrete. A app compara com <b>todos</b> os seus escritórios (reconhece se está no de Lisboa ou no do exterior). A distância é calculada no seu aparelho; as coordenadas não são enviadas nem salvas.</p>
+          <p class="hint">A localização <b>nunca é rastreada</b>: é lida <b>uma única vez</b> (no máximo ~40 s, com teto de 2 min), só dentro da janela abaixo e só quando abrir a app ou tocar no lembrete. Fora da janela, com a app fechada ou depois de responder, não é usada. A app compara com <b>todos</b> os seus escritórios (reconhece se está no de Lisboa ou no do exterior). A distância é calculada no seu aparelho; as coordenadas não são enviadas nem salvas.</p>
           <label class="check"><input type="checkbox" name="locationEnabled" /> Usar localização para sugerir a resposta</label>
           <div class="grid2">
             <label>Janela: início <span class="time-field" data-name="windowStart"></span></label>
@@ -150,12 +151,28 @@
 
         <div class="card local-only" hidden>
           <h3>Cópia de segurança</h3>
-          <p class="hint">Sem servidor, os dados existem <b>apenas neste aparelho</b>. Se trocar de celular, desinstalar a app ou limpar os dados do navegador, perde tudo — a não ser que tenha uma cópia. Faça uma cópia de vez em quando (ex.: no fim de cada mês) e guarde-a no Google Drive, iCloud ou e-mail.</p>
+          <p class="hint">Sem servidor, os dados existem <b>apenas neste aparelho</b>. Se trocar de celular, desinstalar a app ou limpar os dados do navegador, perde tudo — a não ser que tenha uma cópia.</p>
+          <label>Frequência das cópias
+            <select name="backupFrequency">
+              <option value="weekly">Semanal</option>
+              <option value="monthly">Mensal (no 1º acesso de cada mês)</option>
+              <option value="off">Desligada</option>
+            </select>
+          </label>
           <p id="backup-info" class="hint"></p>
           <div class="row">
-            <button type="button" id="backup-export" class="primary">💾 Fazer cópia de segurança</button>
+            <button type="button" id="backup-export" class="primary">💾 Enviar cópia agora</button>
             <label class="button" style="margin:0">📂 Restaurar cópia<input type="file" id="backup-import" accept="application/json,.json" hidden /></label>
           </div>
+          <p class="hint">"Enviar cópia agora" abre a partilha do celular: escolha <b>Drive</b> para guardar no Google Drive, ou <b>Gmail</b> para enviar por e-mail (vão dois arquivos: .json para restaurar e .csv para o Excel).</p>
+
+          <h4>Cópia automática para o Google (Drive + e-mail)</h4>
+          <p class="hint">Opcional e grátis: com um pequeno script na <b>sua</b> conta Google, a cópia vai sozinha para uma pasta do seu Drive e chega ao seu e-mail, na frequência acima, no primeiro acesso à app depois de vencer o prazo. <a href="https://github.com/CabralFM/Office-Presence-Management-App/blob/master/presenca-app/integrations/google-backup.md" target="_blank" rel="noopener">Como configurar (≈5 min, num computador)</a></p>
+          <label>Endereço do script <input type="url" name="backupUrl" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off" /></label>
+          <label>Chave secreta <input type="password" name="backupToken" autocomplete="off" /></label>
+          <label class="check"><input type="checkbox" name="backupEmail" /> Enviar também por e-mail (com os arquivos em anexo)</label>
+          <div class="row"><button type="button" id="backup-auto-now">☁️ Enviar cópia para o Google agora</button></div>
+          <p id="backup-auto-info" class="hint"></p>
         </div>
 
         <div class="card row sticky-actions">

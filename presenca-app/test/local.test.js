@@ -192,3 +192,24 @@ test('lembretes do calendário não começam antes da admissão', () => {
   assert.equal(count, 2); // 03 e 04/12
   assert.ok(!ics.includes('DTSTART:20261202'));
 });
+
+import { isBackupDue } from '../src/core/backup.js';
+
+test('cópias de segurança: quando estão atrasadas', () => {
+  assert.equal(isBackupDue({ frequency: 'weekly', lastAt: null }, '2026-11-06'), true, 'nunca feita');
+  assert.equal(isBackupDue({ frequency: 'weekly', lastAt: '2026-11-01' }, '2026-11-07'), false, '6 dias');
+  assert.equal(isBackupDue({ frequency: 'weekly', lastAt: '2026-11-01' }, '2026-11-08'), true, '7 dias');
+  assert.equal(isBackupDue({ frequency: 'monthly', lastAt: '2026-11-01' }, '2026-11-30'), false, 'mesmo mês');
+  assert.equal(isBackupDue({ frequency: 'monthly', lastAt: '2026-11-30' }, '2026-12-01'), true, '1º acesso de dezembro');
+  assert.equal(isBackupDue({ frequency: 'off', lastAt: null }, '2026-11-06'), false, 'desligada');
+});
+
+test('ajustes da cópia: validação do endereço do Google Apps Script', () => {
+  const { call } = setup();
+  assert.equal(call('PUT', '/api/settings', { backup: { autoUrl: 'https://evil.example/x' } }).status, 400);
+  assert.equal(call('PUT', '/api/settings', { backup: { frequency: 'diaria' } }).status, 400);
+  const ok = call('PUT', '/api/settings', { backup: { frequency: 'monthly', autoUrl: 'https://script.google.com/macros/s/AKfycb_x-1/exec', autoToken: 'abc', lastAt: '2026-11-06' } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.data.settings.backup.frequency, 'monthly');
+  assert.equal(ok.data.settings.backup.email, true);
+});

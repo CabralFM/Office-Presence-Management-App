@@ -36,7 +36,7 @@ Aplicação web (PWA) para controlar os dias em que você trabalha **no escritó
 | **Perguntar quando muda o local** | (1) Se o fuso do aparelho for diferente do escritório previsto, a app pergunta *"Você está trabalhando em outro local?"* e pré-preenche a viagem. (2) Ao registrar "Escritório" escolhe-se em qual. (3) O check-in por localização reconhece **qual** escritório está mais perto e avisa se não for o previsto. (4) O resumo semanal pergunta se vai trabalhar em outro escritório. |
 | **Férias e ausências** | Tipos: 🌴 Férias, 🤒 Doença, 📄 Licença (parental, casamento, luto…), 🛌 Folga/compensação, 📝 Outra. Registra-se um **período** (ex.: 03 a 14/08) e só os dias úteis contam. **Justificação obrigatória** em todos menos férias (ex.: "Atestado médico nº 4521"). A app avisa ausências sem justificação, não apaga dias já registrados como escritório/casa sem confirmação, e permite editar/remover o período. A justificação vai no CSV exportado. |
 | **Exportar** | CSV com todos os registros (para conferência com o RH). |
-| **Cópia de segurança** | *Modo local:* exporta/importa todos os dados num arquivo `.json` (para guardar no Drive/iCloud ou passar para um celular novo). |
+| **Cópia de segurança** | *Modo local:* semanal ou mensal. Quando vence, o Painel avisa e, com um toque, partilha `.json` (restaurar) + `.csv` (Excel) para o Drive/Gmail. **Automática e grátis:** com um Google Apps Script na sua conta, a cópia vai sozinha para uma pasta do Drive e para o seu e-mail ([instruções](integrations/google-backup.md)). |
 
 ## Feriados: de onde vêm, em cada dia
 
@@ -120,7 +120,8 @@ presenca-app/
 │   ├── local-backend.js     liga a interface a core/api.js dentro do celular
 │   └── sw.js                service worker: offline (+ push no modo servidor)
 ├── scripts/build-static.mjs ← gera o site estático em dist/ (esbuild)
-└── test/                  ← node:test (51 testes, incluindo o modo local)
+├── integrations/          ← script do Google (cópias para Drive + e-mail) e instruções
+└── test/                  ← node:test (58 testes, incluindo o modo local)
 ```
 
 - **Por que funciona sem servidor?** Todas as regras são funções puras em `src/core/`. No modo local, a interface chama `core/api.js` diretamente dentro do celular, com os dados no armazenamento do navegador. No modo servidor, o Express chama exatamente a mesma função. Por isso os dois modos se comportam igual e os mesmos testes cobrem ambos.
@@ -129,6 +130,7 @@ presenca-app/
 - **Por que um único `app.js` de 1,5 MB?** Ele inclui os feriados de ~200 países (para as viagens). Comprimido são ~260 KB, baixados uma vez. Depois a app abre sem internet.
 - **Por que feriados calculados e não uma API?** Funciona offline e permite planejar semestres futuros. Para os outros países usamos `date-holidays`, que traz os dados no pacote.
 - **Por que o fuso do aparelho como sinal de viagem?** Não precisa de GPS nem de permissão. Não pega viagens no mesmo fuso (ex.: Lisboa → Londres), por isso também há a escolha do escritório no registro e a detecção pela localização.
+- **A localização rastreia?** Não. Há um único acesso no código (`getCurrentPosition`, leitura única), nunca `watchPosition`. Só acontece ao abrir a app dentro da janela de horário (ou com um toque seu), dura no máximo ~40 s (rede 10 s + GPS 30 s) e tem um teto absoluto de 2 min.
 - **Por que a localização só no aparelho?** Privacidade: as coordenadas nunca saem do celular, e é leitura única (`getCurrentPosition`), nunca rastreio contínuo.
 
 ## Usar no celular, de graça (sem servidor)
@@ -190,7 +192,7 @@ Só é necessário se quiser notificações push que repetem **até responder** 
 ```bash
 cd presenca-app
 npm install
-npm test          # 51 testes: regras, ausências, feriados, viagens, lembretes, API e modo local
+npm test          # 58 testes: regras, ausências, feriados, viagens, localização, cópias, API e modo local
 npm start         # http://localhost:3000
 ```
 

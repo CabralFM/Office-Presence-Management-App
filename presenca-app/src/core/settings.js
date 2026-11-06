@@ -27,6 +27,9 @@ export const DEFAULT_SETTINGS = {
   // Perguntar quando o fuso do aparelho não bate com o do escritório previsto
   askOnTimezoneChange: true,
   summaries: { weekly: true, monthly: true },
+  // Cópias de segurança (modo local). autoUrl/autoToken: Google Apps Script do
+  // próprio usuário (Drive + e-mail) — ver integrations/google-backup.md.
+  backup: { frequency: 'weekly', lastAt: null, autoUrl: '', autoToken: '', email: true },
 };
 
 /** Fusão profunda: objetos fundem-se; arrays e valores simples substituem. */

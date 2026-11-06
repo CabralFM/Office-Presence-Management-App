@@ -8,6 +8,7 @@ import { buildCsv } from './core/export.js';
 import { buildReminderIcs, googleCalendarLink } from './core/calendar.js';
 import { buildHolidayMap } from './core/offices.js';
 import { semesterOf } from './core/dates.js';
+import { backupSummary } from './core/backup.js';
 
 const repo = createLocalRepo(window.localStorage);
 const api = createApi({ repo, extraMeta: () => ({ mode: 'local' }) });
@@ -28,6 +29,13 @@ export function exportCsv() {
 
 export function exportBackup() {
   return JSON.stringify(repo.exportBackup(), null, 1);
+}
+
+/** Tudo o que uma cópia leva: .json (restaurar), .csv (Excel/Sheets) e um resumo. */
+export function backupBundle() {
+  const today = api.now().date;
+  const report = api.handle('GET', '/api/state').data.report;
+  return { today, filename: `presenca-copia-${today}`, json: exportBackup(), csv: exportCsv(), summary: backupSummary(report, today) };
 }
 
 export function importBackup(text) {
