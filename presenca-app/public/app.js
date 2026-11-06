@@ -5,7 +5,7 @@
 
 // Caminhos relativos: a app funciona tanto na raiz de um servidor como numa
 // subpasta de um site estático (ex.: https://usuario.github.io/Office-Presence-Management-App/).
-import { nearestOffice } from './core/geo.js';
+import { assessPosition } from './core/geo.js';
 import { ABSENCE_TYPES, ABSENCE_LABEL, ABSENCE_ICON } from './core/absences.js';
 import { MODE } from './config.js';
 
@@ -35,7 +35,6 @@ const pct = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
 
 let S = null; // último estado vindo do servidor
 let semesterId = null;
-let geoResult = null; // resultado do último check-in por localização (só em memória)
 
 // ---------------------------------------------------------------- API
 class ApiError extends Error {
@@ -169,7 +168,10 @@ function renderToday() {
         .map((o) => `<option value="${o.id}" ${o.id === (rec?.officeId || expected) ? 'selected' : ''}>${h(o.name)}</option>`)
         .join('')}</select></label>`
     : '';
+  const geoDone = cur === 'office' && rec.source === 'localizacao';
   el.innerHTML = `${head}
+    ${geoDone ? `<div class="geo-result ok-box">✅ Presença registrada pela localização: <b>Escritório${multiOffice() ? ` ${h(officeName(rec.officeId))}` : ''}</b>, a ${fmtDist(rec.distance)}.
+      <div class="row"><button id="geo-undo">↩️ Desfazer</button></div></div>` : ''}
     <p class="hint">${
       cur
         ? `Registrado: <b>${dayIcon(rec)} ${dayLabel(rec)}${cur === 'office' && multiOffice() ? ` · ${h(officeName(rec.officeId))}` : ''}</b>${rec.source === 'localizacao' ? ` (pela localização, a ${fmtDist(rec.distance)})` : ''}${cur === 'absence' ? ` — ${rec.justification ? h(rec.justification) : 'sem justificação'}` : ''}. Pode alterar abaixo.`
@@ -191,14 +193,15 @@ function renderToday() {
   // Trocar o escritório depois de já ter registrado "Escritório" corrige o registro.
   $('#office-pick')?.addEventListener('change', (e) => cur === 'office' && checkin('office', 'manual', null, e.target.value));
   $('#geo-check', el)?.addEventListener('click', () => locationCheckin());
+  $('#geo-undo', el)?.addEventListener('click', undoToday);
   renderTzBanner();
-  if (geoResult) renderGeoResult();
+  renderGeoBox();
 }
 
-async function checkin(status, source, distance = null, officeId) {
+async function checkin(status, source, distance = null, officeId, { quiet = false } = {}) {
   await api('/api/checkin', { method: 'POST', body: { status, source, distance, officeId } });
-  geoResult = null;
-  toast(`Registrado: ${LABEL[status]}${status === 'office' && multiOffice() && officeId ? ` · ${officeName(officeId)}` : ''}`);
+  geoStatus = null;
+  if (!quiet) toast(`Registrado: ${LABEL[status]}${status === 'office' && multiOffice() && officeId ? ` · ${officeName(officeId)}` : ''}`);
   await load();
 }
 
@@ -254,6 +257,11 @@ function renderTzBanner() {
 }
 
 // ---------------------------------------------------------------- localização
+// Fluxo: (1) leitura rápida por Wi-Fi/rede (funciona dentro de edifícios);
+// (2) só se for imprecisa, tenta o GPS com mais tempo; (3) se for confiável e
+// no escritório previsto → registra sozinha (com "Desfazer"); se houver dúvida
+// ou estiver longe → pergunta numa janela por cima da tela.
+// As coordenadas nunca saem do aparelho nem são guardadas.
 function inLocationWindow() {
   const loc = S.settings.location;
   const m = S.now.minutes;
@@ -261,59 +269,138 @@ function inLocationWindow() {
   return m >= toMin(loc.windowStart) && m <= toMin(loc.windowEnd);
 }
 
-function getPosition() {
+const GEO_ERRORS = {
+  1: 'A permissão de localização está bloqueada para esta app. Ative-a nas configurações do navegador (cadeado ao lado do endereço → Localização → Permitir).',
+  2: 'A localização do celular não está disponível. Confirme que a Localização/GPS está ligada nas configurações do celular.',
+  3: 'O celular demorou demais a encontrar a localização (comum dentro de edifícios). Tente de novo perto de uma janela, ou registre pelos botões acima.',
+};
+
+function readPosition(opts) {
   return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) return reject(new Error('Este navegador não suporta localização.'));
+    if (!navigator.geolocation) return reject(Object.assign(new Error('Este navegador não suporta localização.'), { code: 0 }));
     // getCurrentPosition = leitura ÚNICA. Nunca usamos watchPosition (rastreio contínuo).
     navigator.geolocation.getCurrentPosition(
       (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
-      (err) => reject(new Error(err.code === 1 ? 'Permissão de localização negada.' : 'Não foi possível obter a localização.')),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
+      (err) => reject(Object.assign(new Error(GEO_ERRORS[err.code] || 'Não foi possível obter a localização.'), { code: err.code })),
+      opts,
     );
   });
 }
 
-async function locationCheckin() {
-  const loc = S.settings.location;
-  if (!inLocationWindow()) {
-    toast(`A localização só é usada entre ${loc.windowStart} e ${loc.windowEnd}.`);
+/** Leitura rápida primeiro; GPS só se a rápida for imprecisa (ou falhar). */
+async function getPosition(onProgress = () => {}) {
+  let best = null;
+  let lastErr = null;
+  try {
+    best = await readPosition({ enableHighAccuracy: false, timeout: 10000, maximumAge: 120000 });
+  } catch (e) {
+    if (e.code === 1 || e.code === 0) throw e; // sem permissão: não adianta insistir
+    lastErr = e;
+  }
+  if (!best || best.accuracy > 100) {
+    onProgress('Melhorando a precisão com o GPS (pode levar até 30 s)…');
+    try {
+      const gps = await readPosition({ enableHighAccuracy: true, timeout: 30000, maximumAge: 0 });
+      if (!best || gps.accuracy < best.accuracy) best = gps;
+    } catch (e) {
+      if (e.code === 1) throw e;
+      lastErr = e;
+    }
+  }
+  if (!best) throw lastErr || new Error('Não foi possível obter a localização.');
+  return best;
+}
+
+// Estado da verificação (sobrevive a re-desenhos da tela enquanto o GPS responde).
+let geoStatus = null; // { kind: 'loading' | 'error', text }
+
+function renderGeoBox() {
+  const box = $('#geo-box');
+  if (!box) return;
+  if (!geoStatus) {
+    box.innerHTML = '';
     return;
   }
-  const box = $('#geo-box');
-  if (box) box.innerHTML = '<p class="hint">Obtendo localização…</p>';
-  try {
-    const pos = await getPosition();
-    geoResult = nearestOffice(pos, S.settings.offices); // pos é descartada aqui
-    renderGeoResult();
-  } catch (e) {
-    if (box) box.innerHTML = `<p class="error">${h(e.message)}</p>`;
+  if (geoStatus.kind === 'loading') {
+    box.innerHTML = `<div class="geo-result"><span class="spinner"></span> 📍 ${h(geoStatus.text)}</div>`;
+  } else {
+    box.innerHTML = `<div class="geo-result error-box">⚠️ ${h(geoStatus.text)}
+      <div class="row"><button id="geo-retry" class="primary">📍 Tentar de novo</button></div></div>`;
+    $('#geo-retry').onclick = () => locationCheckin();
   }
 }
 
-function renderGeoResult() {
-  const box = $('#geo-box');
-  const g = geoResult;
-  if (!box || !g) return;
-  const expected = S.today.expectedOfficeId;
-  let text;
-  let yes;
-  let no;
-  if (g.atOffice) {
-    const other = g.office.id !== expected;
-    text = `📍 Você está a <b>${fmtDist(g.distance)}</b> do escritório <b>${h(g.office.name)}</b>.${
-      other ? ` ⚠️ O previsto para hoje era <b>${h(officeName(expected))}</b>: se confirmar, valem os feriados de ${h(g.office.name)} neste dia.` : ''
-    } Confirma que está no escritório?`;
-    yes = { label: `✔ Sim, ${h(g.office.name)}`, cls: 'office', go: () => checkin('office', 'localizacao', g.distance, g.office.id) };
-    no = { label: '✖ Não, estou em casa', go: () => checkin('home', 'manual', g.distance) };
-  } else {
-    text = `📍 Você está a <b>${fmtDist(g.distance)}</b> do escritório mais próximo (${h(g.office.name)}). Parece que está <b>em casa / fora do escritório</b>. Confirma?`;
-    yes = { label: '✔ Sim, Casa', cls: 'home', go: () => checkin('home', 'localizacao', g.distance) };
-    no = { label: '✖ Não, estou no escritório', go: () => checkin('office', 'manual', g.distance, $('#office-pick')?.value || expected) };
+async function locationCheckin({ fromLink = false } = {}) {
+  const loc = S.settings.location;
+  if (!inLocationWindow()) {
+    toast(`A localização só é usada entre ${loc.windowStart} e ${loc.windowEnd}${fromLink ? '. Registre pelos botões.' : '.'}`);
+    return;
   }
-  box.innerHTML = `<div class="geo-result">${text}
-      <div class="choice"><button class="${yes.cls}" id="geo-yes">${yes.label}</button><button id="geo-no">${no.label}</button></div></div>`;
-  $('#geo-yes').onclick = yes.go;
-  $('#geo-no').onclick = no.go;
+  geoStatus = { kind: 'loading', text: 'Verificando sua localização…' };
+  renderGeoBox();
+  let pos;
+  try {
+    pos = await getPosition((text) => {
+      geoStatus = { kind: 'loading', text };
+      renderGeoBox();
+    });
+  } catch (e) {
+    geoStatus = { kind: 'error', text: e.message };
+    renderGeoBox();
+    return;
+  }
+  geoStatus = null;
+  renderGeoBox();
+  const expected = S.today.expectedOfficeId;
+  const g = assessPosition(pos, S.settings.offices, expected); // pos é descartada aqui
+  if (!g) return;
+  if (g.verdict === 'office') {
+    // Confiável e no escritório previsto: registra sozinha.
+    await checkin('office', 'localizacao', g.distance, g.office.id, { quiet: true });
+    toast(`✅ Presença registrada: Escritório (pela localização, a ${fmtDist(g.distance)})`);
+    return;
+  }
+  openGeoDialog(g, expected);
+}
+
+/** Pergunta por cima da tela quando há dúvida ou está longe dos escritórios. */
+function openGeoDialog(g, expected) {
+  const dlg = $('#geo-dialog');
+  const acc = g.accuracy ? ` (precisão da leitura: ±${fmtDist(g.accuracy)})` : '';
+  let text;
+  let buttons;
+  if (g.verdict === 'probable') {
+    const other = g.office.id !== expected;
+    text = `Parece que está no escritório <b>${h(g.office.name)}</b>, a ${fmtDist(g.distance)}${acc}.${
+      other ? `<br>⚠️ O previsto para hoje era <b>${h(officeName(expected))}</b>: se confirmar, valem os feriados de ${h(g.office.name)} neste dia.` : ''
+    }<br>Confirma?`;
+    buttons = [
+      { label: `🏢 Sim, estou no escritório${multiOffice() ? ` ${h(g.office.name)}` : ''}`, cls: 'office primary-choice', go: () => checkin('office', 'localizacao', g.distance, g.office.id) },
+      { label: '🏠 Não, estou em casa', cls: 'home', go: () => checkin('home', 'manual', g.distance) },
+    ];
+  } else {
+    text = `Você está a <b>${fmtDist(g.distance)}</b> do escritório mais próximo (${h(g.office.name)})${acc}. Onde você está trabalhando hoje?`;
+    buttons = [
+      { label: '🏠 Em casa', cls: 'home primary-choice', go: () => checkin('home', 'localizacao', g.distance) },
+      { label: '🏢 No escritório', cls: 'office', go: () => checkin('office', 'manual', g.distance, $('#office-pick')?.value || expected) },
+    ];
+  }
+  $('#geo-title').textContent = g.verdict === 'probable' ? '📍 Confirmar presença' : '📍 Fora do escritório';
+  $('#geo-text').innerHTML = text;
+  $('#geo-buttons').innerHTML = buttons.map((b, i) => `<button type="button" class="${b.cls}" data-i="${i}">${b.label}</button>`).join('');
+  $$('#geo-buttons button').forEach((el) =>
+    el.addEventListener('click', async () => {
+      dlg.close();
+      await buttons[Number(el.dataset.i)].go();
+    }),
+  );
+  dlg.showModal();
+}
+
+async function undoToday() {
+  await api(`/api/days/${S.today.date}`, { method: 'PUT', body: { status: null } });
+  toast('Registro de hoje desfeito.');
+  await load();
 }
 
 // ---------------------------------------------------------------- semestre
@@ -980,8 +1067,10 @@ $('#of-geocode').addEventListener('click', async () => {
 
 $('#of-here').addEventListener('click', async () => {
   try {
-    const p = await getPosition();
+    toast('Obtendo a posição…');
+    const p = await getPosition((t) => toast(t));
     officeEdit.location = { lat: p.lat, lng: p.lng, label: $('#office-form').address.value.trim() || 'Posição registrada' };
+    if (p.accuracy > 100) toast(`Posição gravada, mas com pouca precisão (±${Math.round(p.accuracy)} m). Se puder, repita perto de uma janela.`);
     renderOfficeLoc();
   } catch (e) {
     toast(e.message);
@@ -1203,12 +1292,17 @@ async function boot() {
   try {
     asked = sessionStorage.getItem(todayKey) === '1';
   } catch {}
-  if (loc.enabled && S.settings.offices.some((o) => o.location) && S.today.workingDay && !S.today.record?.status && inLocationWindow() && (params.get('checkin') === 'location' || !asked)) {
+  const fromLink = params.get('checkin') === 'location';
+  const beforeStart = S.settings.rules.startDate && S.now.date < S.settings.rules.startDate;
+  const canCheck = loc.enabled && S.settings.offices.some((o) => o.location) && S.today.workingDay && !beforeStart && !S.today.record?.status;
+  if (canCheck && (fromLink || !asked)) {
     try {
       sessionStorage.setItem(todayKey, '1');
     } catch {}
     location.hash = '#painel';
-    locationCheckin();
+    window.scrollTo(0, 0);
+    if (inLocationWindow()) locationCheckin({ fromLink });
+    else if (fromLink) toast(`A verificação por localização só funciona entre ${loc.windowStart} e ${loc.windowEnd}. Registre pelos botões.`);
   }
   if (params.has('checkin')) history.replaceState(null, '', location.pathname + location.hash);
   if (LOCAL) renderBackupInfo();

@@ -94,3 +94,22 @@ test('localização reconhece em que escritório você está', () => {
   assert.equal(almada.office.id, 'lx');
   assert.equal(almada.atOffice, false);
 });
+
+import { assessPosition } from '../src/core/geo.js';
+
+test('localização: registra sozinha só quando é confiável e no escritório previsto', () => {
+  const s = settings();
+  const at = (dLat, accuracy) => ({ lat: 38.7223 + dLat, lng: -9.1393, accuracy });
+  // Dentro do escritório de Lisboa, GPS bom → regista sozinha
+  assert.equal(assessPosition(at(0.0003, 20), s.offices, 'lx').verdict, 'office');
+  // Dentro do raio mas GPS impreciso (900 m) → pergunta
+  assert.equal(assessPosition(at(0.0003, 900), s.offices, 'lx').verdict, 'probable');
+  // A ~600 m com precisão de 900 m → pergunta (não regista sozinha)
+  assert.equal(assessPosition(at(0.0054, 900), s.offices, 'lx').verdict, 'probable');
+  // No escritório de Madrid quando o previsto era Lisboa → pergunta
+  assert.equal(assessPosition({ lat: 40.4169, lng: -3.7035, accuracy: 15 }, s.offices, 'lx').verdict, 'probable');
+  // Em casa (Almada) → longe de todos → pergunta
+  const home = assessPosition({ lat: 38.679, lng: -9.1569, accuracy: 30 }, s.offices, 'lx');
+  assert.equal(home.verdict, 'away');
+  assert.ok(home.distance > 4000);
+});

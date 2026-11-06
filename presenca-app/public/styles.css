@@ -55,6 +55,11 @@ fieldset label { display: inline-flex; gap: 6px; margin-right: 12px; color: var(
 .choice .home { background: color-mix(in srgb, var(--home) 12%, var(--card)); }
 .choice .absence { background: color-mix(in srgb, var(--absence) 12%, var(--card)); }
 .geo-result { padding: 10px; border-radius: 8px; background: color-mix(in srgb, var(--primary) 8%, var(--card)); margin-top: 8px; }
+.geo-result.ok-box { background: color-mix(in srgb, var(--ok) 14%, var(--card)); border: 1px solid var(--ok); margin-bottom: 8px; }
+.geo-result.error-box { background: color-mix(in srgb, var(--warn) 14%, var(--card)); border: 1px solid var(--warn); }
+.choice .primary-choice { outline: 3px solid var(--primary); }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Semestre */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 12px; }
