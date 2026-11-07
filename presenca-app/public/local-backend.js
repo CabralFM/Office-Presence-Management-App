@@ -8,6 +8,7 @@ import { buildCsv } from './core/export.js';
 import { buildReminderIcs, googleCalendarLink } from './core/calendar.js';
 import { buildHolidayMap } from './core/offices.js';
 import { semesterOf } from './core/dates.js';
+import { backupSummary } from './core/backup.js';
 
 const repo = createLocalRepo(window.localStorage);
 const api = createApi({ repo, extraMeta: () => ({ mode: 'local' }) });
@@ -30,6 +31,13 @@ export function exportBackup() {
   return JSON.stringify(repo.exportBackup(), null, 1);
 }
 
+/** Tudo o que uma cópia leva: .json (restaurar), .csv (Excel/Sheets) e um resumo. */
+export function backupBundle() {
+  const today = api.now().date;
+  const report = api.handle('GET', '/api/state').data.report;
+  return { today, filename: `presenca-copia-${today}`, json: exportBackup(), csv: exportCsv(), summary: backupSummary(report, today) };
+}
+
 export function importBackup(text) {
   let data;
   try {
@@ -47,9 +55,13 @@ export function reminderIcs() {
   const end = semesterOf(today).end;
   const days = repo.getDays(today, end);
   const holidays = buildHolidayMap(settings, today, end, days);
-  return { ...buildReminderIcs({ settings, days, holidays, from: today, to: end, appUrl: appUrl() }), until: end };
+  // O link do lembrete pede a verificação por localização (se estiver ligada).
+  const url = `${appUrl()}?checkin=${settings.location.enabled ? 'location' : '1'}`;
+  return { ...buildReminderIcs({ settings, days, holidays, from: today, to: end, appUrl: url }), until: end };
 }
 
 export function googleLink() {
-  return googleCalendarLink({ settings: repo.getSettings(), appUrl: appUrl(), firstDate: api.now().date });
+  const settings = repo.getSettings();
+  const url = `${appUrl()}?checkin=${settings.location.enabled ? 'location' : '1'}`;
+  return googleCalendarLink({ settings, appUrl: url, firstDate: api.now().date });
 }

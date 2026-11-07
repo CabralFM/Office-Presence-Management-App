@@ -11,6 +11,7 @@ import { CITY_PRESETS, holidayMap, listCountries, listRegions, optionalHolidaysF
 import { addDays, parseISO, parseSemesterId, semesterOf, toISO } from './dates.js';
 import { DEFAULT_OFFICE, expectedOffice, officeById, tripForDay, buildHolidayMap } from './offices.js';
 import { ABSENCE_TYPES, ABSENCE_LABEL, validateAbsence } from './absences.js';
+import { APPS_SCRIPT_URL_RE, BACKUP_FREQUENCIES } from './backup.js';
 import { holidaysFor, isWorkingDay, localNow, semesterReport } from './report.js';
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -268,6 +269,14 @@ export function validateSettingsPatch(p) {
     for (const k of ['time', 'until']) if (r[k] !== undefined && !HHMM_RE.test(r[k])) e.push(`hora inválida em ${k}`);
     if (r.repeatMinutes !== undefined && !(Number.isInteger(r.repeatMinutes) && r.repeatMinutes >= 5)) e.push('repetição mínima de 5 minutos');
     if (r.weekdays !== undefined && !(Array.isArray(r.weekdays) && r.weekdays.every((d) => Number.isInteger(d) && d >= 0 && d <= 6))) e.push('dias da semana inválidos');
+  }
+  if (p.backup) {
+    const b = p.backup;
+    if (b.frequency !== undefined && !(b.frequency in BACKUP_FREQUENCIES)) e.push('frequência de cópia inválida');
+    if (b.lastAt !== undefined && b.lastAt !== null && !isDate(b.lastAt)) e.push('data da última cópia inválida');
+    if (b.autoUrl !== undefined && b.autoUrl !== '' && !APPS_SCRIPT_URL_RE.test(b.autoUrl)) e.push('endereço do script inválido: deve ser https://script.google.com/macros/s/…/exec');
+    if (b.autoToken !== undefined && !(typeof b.autoToken === 'string' && b.autoToken.length <= 100)) e.push('chave secreta inválida');
+    if (b.email !== undefined && typeof b.email !== 'boolean') e.push('opção de e-mail inválida');
   }
   if (p.location) {
     const l = p.location;

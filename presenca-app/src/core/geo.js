@@ -38,3 +38,31 @@ export function nearestOffice(position, offices) {
   }
   return best;
 }
+
+/**
+ * Decide o que fazer com uma leitura de localização:
+ *   'office'   → confiável e dentro do raio do escritório PREVISTO para hoje:
+ *                a app registra sozinha (com opção de desfazer);
+ *   'probable' → parece estar num escritório, mas com dúvida (GPS impreciso
+ *                ou outro escritório que não o previsto): a app pergunta;
+ *   'away'     → longe de todos os escritórios: a app pergunta (pode estar
+ *                em casa, num cliente, em viagem…).
+ *
+ * "Confiável" = dentro do raio E precisão do GPS até 250 m. Ex.: raio 200 m,
+ * leitura a 35 m com precisão de 20 m → registra; leitura a 600 m com precisão
+ * de 900 m → pergunta (pode estar no escritório ou a quarteirões dali).
+ */
+export const MAX_TRUSTED_ACCURACY_M = 250;
+
+export function assessPosition(position, offices, expectedOfficeId) {
+  const best = nearestOffice(position, offices);
+  if (!best) return null;
+  const accuracy = Math.round(position.accuracy || 0);
+  const radius = best.office.radiusM || 200;
+  const confident = best.distance <= radius && accuracy <= MAX_TRUSTED_ACCURACY_M;
+  let verdict;
+  if (confident && best.office.id === expectedOfficeId) verdict = 'office';
+  else if (best.atOffice) verdict = 'probable';
+  else verdict = 'away';
+  return { verdict, office: best.office, distance: best.distance, accuracy };
+}
