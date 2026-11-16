@@ -432,6 +432,7 @@ function renderSemester() {
   const planPct = r.requiredOffice ? Math.min(100, (r.plan.officeWithPlan / r.requiredOffice) * 100) : 100;
   $('#semester-card').innerHTML = `
     <h3>${h(r.semester.label)} <span class="badge ${r.status}">${STATUS_TXT[r.status]}</span></h3>
+    ${r.plan.officeWithPlan > t.office || r.plan.homeWithPlan > t.home ? `<p class="hint">🗓️ Com o seu planejamento: <b>${pct(r.plan.projectedPct)}</b> no escritório${r.plan.neededAfterPlan === 0 && r.plan.credit > 0 ? ` · crédito de <b>${r.plan.credit}</b> dia${r.plan.credit > 1 ? 's' : ''}` : r.plan.neededAfterPlan ? ` · faltam ${r.plan.neededAfterPlan} por planejar` : ''}. <a href="#planejamento">Ver planejamento</a></p>` : ''}
     ${r.startDate ? `<p class="hint">📌 Contagem a partir de <b>${fmtDM(r.startDate)}/${r.startDate.slice(0, 4)}</b> (data de início).</p>` : ''}
     <div class="bar" title="Escritório: feitos + planejados"><i class="plan" style="width:${planPct}%"></i><i style="width:${donePct}%"></i></div>
     <p class="hint">${t.office} de ${r.requiredOffice} dias obrigatórios no escritório${r.plan.officeWithPlan > t.office ? ` (+${r.plan.officeWithPlan - t.office} planejados)` : ''}.
@@ -457,13 +458,13 @@ function renderAlerts() {
 function renderMonths() {
   const target = S.report.rules.officePct / 100;
   $('#months-table').innerHTML = `
-    <thead><tr><th>Mês</th><th>Úteis</th><th>🏢</th><th>🏠</th><th>🌴</th><th>% esc.</th><th>Cota</th><th>Recomendado (restantes)</th></tr></thead>
+    <thead><tr><th>Mês</th><th>Úteis</th><th>🏢</th><th>🏠</th><th>🌴</th><th>% esc.</th><th>Com plano</th><th>Sugerido (livres)</th></tr></thead>
     <tbody>${S.report.months
       .map(
         (m) => `<tr class="${m.isCurrent ? 'current' : ''}">
           <td style="text-transform:capitalize">${m.name}</td><td>${m.working}</td><td>${m.office}</td><td>${m.home}</td><td>${m.absence}</td>
           <td class="${m.officePct == null ? '' : m.officePct < target ? 'low' : 'good'}">${pct(m.officePct)}</td>
-          <td>${m.target}</td><td>${m.open ? `${m.recommendedOffice} de ${m.open}` : '—'}</td></tr>`,
+          <td>${pct(m.projectedPct)}</td><td>${m.open ? `${m.recommendedOffice} de ${m.open}` : '—'}</td></tr>`,
       )
       .join('')}</tbody>`;
 }
@@ -589,40 +590,120 @@ function openDay(date) {
 // ---------------------------------------------------------------- planejamento
 function renderPlanning() {
   const r = S.report;
-  $('#plan-summary').innerHTML = `
-    <h3>Projeção do semestre</h3>
-    <p>Feitos: <b>${r.totals.office}</b> no escritório · Planejados: <b>${r.totals.plannedOffice}</b> · Meta: <b>${r.requiredOffice}</b></p>
-    <p>${
-      r.plan.neededAfterPlan === 0
-        ? '✅ Com o que já fez e planejou, a meta do semestre fica cumprida.'
-        : `Ainda precisa planejar <b>${r.plan.neededAfterPlan}</b> dia(s) de escritório entre os <b>${r.plan.unplanned}</b> dias úteis sem plano.`
-    }${r.plan.homeOverCap ? ` ⚠️ O plano excede o limite de casa em ${r.plan.homeOverCap} dia(s).` : ''}</p>
-    <div class="row"><button id="auto-plan">✨ Sugerir plano automático para as próximas 4 semanas</button></div>`;
-  $('#auto-plan').onclick = autoPlan;
   renderTrips();
   renderAbsences();
+  if (r.notStarted) {
+    $('#plan-bar').innerHTML = '<p class="hint">Este período é anterior ao início da contagem: não há nada a planejar.</p>';
+    $('#plan-detail').innerHTML = '';
+    $('#weeks').innerHTML = '';
+    $('#plan-actions').innerHTML = '';
+    return;
+  }
+  renderPlanBar(r);
 
-  const weeks = r.weeks.filter((w) => !w.isPast);
+  const pctT = r.rules.officePct / 100;
+  const editable = (d) => {
+    const { hol, rec, future, today, beforeStart } = dayInfo(d);
+    return d >= S.semester.start && d <= S.semester.end && !hol && (future || today) && !rec.status && !beforeStart;
+  };
+  const weekHtml = (w) => {
+    const days = [0, 1, 2, 3, 4].map((i) => {
+      const d = addDaysIso(w.start, i);
+      const { hol, rec, plan, trip, beforeStart } = dayInfo(d);
+      const inSem = d >= S.semester.start && d <= S.semester.end;
+      const cls = rec.status || (plan ? `plan-${plan}` : '');
+      const lbl = !inSem || beforeStart ? '–' : hol ? '🎉' : rec.status ? dayIcon(rec) : plan ? ICON[plan] + (trip ? '✈️' : '') : '·';
+      return `<button data-plan="${d}" class="${cls}" ${editable(d) ? '' : 'disabled'} title="${h(hol?.name || '')}">${DOW[i + 1]} ${fmtDM(d)}<br>${lbl}</button>`;
+    });
+    const off = w.office + w.plannedOffice;
+    const home = w.home + w.plannedHome;
+    const anyEditable = [0, 1, 2, 3, 4].some((i) => editable(addDaysIso(w.start, i)));
+    const cum = w.cumPct == null ? '' : `<span class="cum ${w.cumPct + 1e-9 >= pctT ? 'good' : 'low'}" title="Feito + planejado, do início da contagem até ao fim desta semana">até aqui: ${pct(w.cumPct)} (${w.cumOffice}/${w.cumBase})</span>`;
+    return `<div class="week ${w.isCurrent ? 'current' : ''} ${w.isPast ? 'past' : ''}">
+        <header><b>${w.isCurrent ? 'Esta semana' : `Semana de ${fmtDM(w.start)}`}</b>
+          <span>🏢 ${off} · 🏠 ${home}${w.absence ? ` · 🌴 ${w.absence}` : ''}${w.unplanned ? ` · ${w.unplanned} livre${w.unplanned > 1 ? 's' : ''}` : ''} ${cum}</span></header>
+        ${w.holidayList.length ? `<small class="hint">🎉 ${h(w.holidayList.map((x) => `${fmtDM(x.date)} ${x.name}`).join(', '))}</small>` : ''}
+        <div class="days">${days.join('')}</div>
+        ${w.suggestedOffice ? `<p class="hint suggest">💡 Para cumprir o período, sugiro mais ${w.suggestedOffice} dia${w.suggestedOffice > 1 ? 's' : ''} no escritório nos dias livres desta semana.</p>` : ''}
+        ${anyEditable ? `<div class="week-actions">
+          <button data-week="${w.start}" data-set="office">🏢 Semana toda</button>
+          <button data-week="${w.start}" data-set="home">🏠 Semana toda</button>
+          <button data-week="${w.start}" data-set="vacation">🌴 Férias</button>
+          <button data-week="${w.start}" data-set="clear">Limpar</button></div>` : ''}
+      </div>`;
+  };
+  const past = r.weeks.filter((w) => w.isPast);
+  const coming = r.weeks.filter((w) => !w.isPast);
   $('#weeks').innerHTML =
-    weeks
-      .map((w) => {
-        const days = [0, 1, 2, 3, 4].map((i) => {
-          const d = addDaysIso(w.start, i);
-          const inSem = d >= S.semester.start && d <= S.semester.end;
-          const { hol, rec, plan, trip, future, today } = dayInfo(d);
-          const disabled = !inSem || hol || (!future && !today) || rec.status || dayInfo(d).beforeStart;
-          const cls = rec.status || (plan ? `plan-${plan}` : '');
-          const lbl = hol ? '🎉' : rec.status ? dayIcon(rec) : plan ? ICON[plan] + (trip ? '✈️' : '') : '·';
-          return `<button data-plan="${d}" class="${cls}" ${disabled ? 'disabled' : ''} title="${h(hol?.name || '')}">${DOW[i + 1]} ${fmtDM(d)}<br>${lbl}</button>`;
-        });
-        const planned = w.plannedOffice + w.office;
-        return `<div class="week ${w.isCurrent ? 'current' : ''}">
-          <header><b>${w.isCurrent ? 'Esta semana' : `Semana de ${fmtDM(w.start)}`}</b>
-            <span>Recomendado: <b>${w.recommendedOffice}</b> ${w.recommendedOffice === 1 ? 'dia' : 'dias'} 🏢 · planejado/feito: ${planned}${w.holidayList.length ? ` · feriado: ${h(w.holidayList.map((x) => x.name).join(', '))}` : ''}</span></header>
-          <div class="days">${days.join('')}</div></div>`;
-      })
-      .join('') || '<p class="hint">Semestre encerrado.</p>';
+    (past.length ? `<details class="past-weeks"><summary>Semanas anteriores (${past.length}) — o que já foi feito</summary>${past.map(weekHtml).join('')}</details>` : '') +
+    (coming.map(weekHtml).join('') || '<p class="hint">Período encerrado.</p>');
   $$('#weeks [data-plan]').forEach((b) => b.addEventListener('click', () => cyclePlan(b.dataset.plan)));
+  $$('#weeks [data-week]').forEach((b) => b.addEventListener('click', () => setWeek(b.dataset.week, b.dataset.set, editable)));
+
+  $('#plan-actions').innerHTML = `<div class="row">
+      ${r.plan.unplanned ? '<button id="auto-plan">✨ Preencher os dias livres com a sugestão</button>' : ''}
+      ${r.totals.plannedOffice || r.totals.plannedHome ? '<button id="clear-plan">↺ Limpar todo o planejamento</button>' : ''}</div>
+    <p class="hint">Toque num dia para alternar: livre → 🏢 → 🏠 → livre. O preenchimento automático só mexe nos dias livres: o que já planejou fica como está.</p>`;
+  $('#auto-plan')?.addEventListener('click', autoPlan);
+  $('#clear-plan')?.addEventListener('click', clearPlan);
+}
+
+/** Barra de projeção: feito + planejado vs. o mínimo, e o "crédito". */
+function renderPlanBar(r) {
+  const t = r.totals;
+  const p = r.plan;
+  const base = t.base || 1;
+  const seg = (n, cls, title) => (n > 0 ? `<i class="${cls}" style="width:${(n / base) * 100}%" title="${title}: ${n}"></i>` : '');
+  const minPct = (r.requiredOffice / base) * 100;
+  let verdict;
+  if (p.homeOverCap) verdict = `<span class="low">⚠️ O plano passa o limite de dias em casa em ${p.homeOverCap}.</span>`;
+  else if (p.neededAfterPlan === 0)
+    verdict = p.credit > 0
+      ? `<span class="good">✅ Cumpre, com <b>crédito de ${p.credit} dia${p.credit > 1 ? 's' : ''}</b>${p.unplanned ? ` — e os ${p.unplanned} dias livres podem ser todos em casa` : ' — pode trocar até ' + p.credit + ' dia' + (p.credit > 1 ? 's' : '') + ' de escritório por casa'}.</span>`
+      : `<span class="good">✅ Cumpre à justa${p.unplanned ? ` — os ${p.unplanned} dias livres podem ser em casa` : ''}.</span>`;
+  else if (p.neededAfterPlan <= p.unplanned)
+    verdict = `Faltam <b>${p.neededAfterPlan}</b> dia${p.neededAfterPlan > 1 ? 's' : ''} de escritório nos <b>${p.unplanned}</b> dias livres (os outros ${p.homeFree} podem ser em casa).`;
+  else verdict = `<span class="low">❌ Não chega: faltam ${p.neededAfterPlan} dias de escritório e só há ${p.unplanned} livres.</span>`;
+  // Parte fixa (compacta): a resposta curta + a barra. O detalhe rola com a página.
+  const short = p.homeOverCap
+    ? `<span class="low">passa o limite de casa</span>`
+    : p.neededAfterPlan === 0
+      ? `<span class="good">✅ crédito ${p.credit > 0 ? `+${p.credit}` : '0'}</span>`
+      : `<span class="low">faltam ${p.neededAfterPlan}</span>`;
+  $('#plan-bar').innerHTML = `
+    <div class="plan-head"><b>Com o plano: ${pct(p.projectedPct)} no escritório</b> <span class="hint">mín. ${r.rules.officePct}% (${r.requiredOffice}/${t.base})</span> ${short}</div>
+    <div class="stack" role="img" aria-label="Projeção do período">
+      ${seg(t.office, 's-office', 'Escritório (feito)')}${seg(t.plannedOffice, 's-office plan', 'Escritório (planejado)')}${seg(t.home, 's-home', 'Casa (feito)')}${seg(t.plannedHome, 's-home plan', 'Casa (planejado)')}${seg(p.unplanned - t.pending, 's-free', 'Livre')}${seg(t.pending, 's-free', 'Sem registro')}
+      <b class="min" style="left:${minPct}%" title="Mínimo"></b>
+    </div>`;
+  $('#plan-detail').innerHTML = `
+    <div class="plan-legend"><span><i class="s-office"></i>🏢 ${t.office} feitos + ${t.plannedOffice} planejados = <b>${p.officeWithPlan}</b></span>
+      <span><i class="s-home"></i>🏠 ${t.home} + ${t.plannedHome} = <b>${p.homeWithPlan}</b></span>
+      <span><i class="s-free"></i>livres ${p.unplanned - t.pending}${t.pending ? ` · sem registro ${t.pending}` : ''}</span>${t.absence ? `<span>🌴 ${t.absence} fora da base</span>` : ''}</div>
+    <p class="verdict">${verdict}</p>`;
+}
+
+async function putPlans(dates, plan) {
+  for (const d of dates) await api(`/api/days/${d}`, { method: 'PUT', body: { plan } });
+}
+
+/** Ações rápidas de uma semana inteira. Só mexem em dias editáveis (futuros, sem registro, sem feriado). */
+async function setWeek(start, what, editable) {
+  const dates = [0, 1, 2, 3, 4].map((i) => addDaysIso(start, i)).filter(editable);
+  if (!dates.length) return;
+  if (what === 'vacation') return openAbsence({ type: 'ferias', start: dates[0], end: dates[dates.length - 1] });
+  await putPlans(dates, what === 'clear' ? null : what);
+  await load();
+}
+
+async function clearPlan() {
+  if (!confirm('Apagar todo o planejamento futuro deste período? (Registros, férias e viagens não são apagados.)')) return;
+  const dates = Object.entries(S.days)
+    .filter(([d, r]) => d >= S.now.date && !r.status && (r.plan === 'office' || r.plan === 'home'))
+    .map(([d]) => d);
+  await putPlans(dates, null);
+  toast(`${dates.length} dia(s) voltaram a ficar livres.`);
+  await load();
 }
 
 // ---------------------------------------------------------------- férias e ausências
@@ -771,27 +852,31 @@ async function cyclePlan(date) {
   await load();
 }
 
-/** Preenche as próximas 4 semanas com a recomendação, preferindo terça a quinta. */
+/**
+ * Preenche os dias LIVRES (sem plano) com a sugestão: em cada semana, os dias
+ * de escritório que ainda faltam (preferindo ter–qui) e o resto em casa.
+ * Não mexe no que já planejou.
+ */
 async function autoPlan() {
   const prefer = [2, 3, 4, 1, 5]; // ter, qua, qui, seg, sex
   const writes = [];
-  for (const w of S.report.weeks.filter((x) => !x.isPast).slice(0, 4)) {
+  for (const w of S.report.weeks.filter((x) => !x.isPast)) {
     const free = [];
     for (let i = 0; i < 5; i++) {
       const d = addDaysIso(w.start, i);
-      const { hol, rec, plan, future, today } = dayInfo(d);
-      if (d < S.semester.start || d > S.semester.end || hol || rec.status || plan || (!future && !today)) continue;
+      const { hol, rec, plan, future, today, beforeStart } = dayInfo(d);
+      if (d < S.semester.start || d > S.semester.end || hol || rec.status || plan || beforeStart || (!future && !today)) continue;
       free.push({ d, wd: i + 1 });
     }
     free.sort((a, b) => prefer.indexOf(a.wd) - prefer.indexOf(b.wd));
-    let need = Math.max(0, w.recommendedOffice - w.plannedOffice);
+    let need = w.suggestedOffice;
     for (const f of free) {
       writes.push({ d: f.d, plan: need > 0 ? 'office' : 'home' });
       if (need > 0) need--;
     }
   }
   for (const w of writes) await api(`/api/days/${w.d}`, { method: 'PUT', body: { plan: w.plan } });
-  toast(`${writes.length} dia(s) planejados`);
+  toast(`${writes.length} dia(s) livres preenchidos.`);
   await load();
 }
 

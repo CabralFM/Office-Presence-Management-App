@@ -28,7 +28,7 @@ Aplicação web (PWA) para controlar os dias em que você trabalha **no escritó
 | **Check-in por localização (opcional)** | Você define o endereço do escritório e uma janela (ex.: 09:00–10:30). Dentro da janela, ao tocar no lembrete/abrir a app, a localização é lida **uma única vez**, a distância é calculada **no seu aparelho** e a app pergunta: *"Você está a 120 m do escritório. Confirma que está no escritório?"*. As coordenadas não são enviadas ao servidor; fora da janela ou depois de responder, a localização não é usada. |
 | **Regra dos 50%** | Mínimo no escritório = 50% dos dias trabalháveis (arredondado para cima). Teto absoluto de dias em casa: opcional, desligado por padrão (ver abaixo). |
 | **Avisos antecipados** | "Outubro fechou com 38% (abaixo de 50%)", "Para novembro cumprir a cota, vá mais 10 dos 17 dias úteis; para recuperar o atraso o ideal são 12", "Restam apenas 8 dias de home office", "Há 2 dias sem registro". |
-| **Planejamento** | Distribui os dias de escritório que faltam pelas semanas/meses restantes (semanas com feriado pedem menos). Botão "Sugerir plano automático" preenche as próximas 4 semanas, preferindo ter–qui. |
+| **Planejamento livre** | A regra é do período, não da semana nem do mês: pode concentrar o escritório agora e ficar em casa depois. Barra fixa "Com o plano: 59% no escritório · ✅ crédito +3"; em cada semana, botões 🏢/🏠 "Semana toda", 🌴 Férias e Limpar, e o acumulado "até aqui: 79%". A sugestão só ocupa os dias ainda livres, e o preenchimento automático nunca mexe no que já planejou. |
 | **Resumos** | Os avisos do painel mostram sempre a situação do mês e do semestre. No modo servidor, também chegam por push no 1º dia útil da semana e do mês. |
 | **Escritórios** | Cadastre cada escritório (ex.: Lisboa, Madrid, São Paulo) com país, região, fuso, endereço e feriados municipais. Um deles é o **principal**. |
 | **Feriados por local de trabalho** | Cada dia usa o calendário do escritório onde você trabalha nesse dia. Brasil e Portugal: cálculo próprio (inclui móveis e facultativos). Outros ~200 países e regiões: biblioteca `date-holidays`, offline. Municipais: editáveis, com modelos (Lisboa, Almada, Porto, Seixal, Sintra, Madrid, São Paulo…). Aba Calendário → "Feriados do semestre" mostra cada feriado e de que escritório vem. |
@@ -121,7 +121,7 @@ presenca-app/
 │   └── sw.js                service worker: offline (+ push no modo servidor)
 ├── scripts/build-static.mjs ← gera o site estático em dist/ (esbuild)
 ├── integrations/          ← script do Google (cópias para Drive + e-mail) e instruções
-└── test/                  ← node:test (58 testes, incluindo o modo local)
+└── test/                  ← node:test (60 testes, incluindo o modo local)
 ```
 
 - **Por que funciona sem servidor?** Todas as regras são funções puras em `src/core/`. No modo local, a interface chama `core/api.js` diretamente dentro do celular, com os dados no armazenamento do navegador. No modo servidor, o Express chama exatamente a mesma função. Por isso os dois modos se comportam igual e os mesmos testes cobrem ambos.
@@ -192,7 +192,7 @@ Só é necessário se quiser notificações push que repetem **até responder** 
 ```bash
 cd presenca-app
 npm install
-npm test          # 58 testes: regras, ausências, feriados, viagens, localização, cópias, API e modo local
+npm test          # 60 testes: regras, ausências, feriados, viagens, localização, cópias, API e modo local
 npm start         # http://localhost:3000
 ```
 

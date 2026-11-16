@@ -116,6 +116,24 @@ tr.current td { font-weight: 600; }
 /* Semanas */
 .week { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
 .week.current { border-color: var(--primary); }
+.week.past { opacity: .75; }
+.week header .cum { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.week .suggest { margin: 6px 0 0; }
+.week-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 6px; }
+.week-actions button { padding: 6px 2px; font-size: 12px; }
+.past-weeks { margin-bottom: 10px; } .past-weeks summary { cursor: pointer; color: var(--muted); margin-bottom: 6px; }
+/* Barra de projeção do planejamento: fica visível enquanto se mexe nas semanas */
+.plan-sticky { position: sticky; top: 104px; z-index: 3; box-shadow: 0 4px 14px rgb(0 0 0 / .08); padding: 8px 12px; }
+.plan-sticky .plan-head { font-size: 14px; } .plan-sticky .stack { margin: 6px 0 2px; height: 12px; }
+.plan-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.stack { position: relative; display: flex; height: 16px; border-radius: 999px; overflow: hidden; background: var(--border); margin: 8px 0 6px; }
+.stack > i { display: block; height: 100%; }
+.s-office { background: var(--office); } .s-home { background: var(--home); } .s-free { background: var(--border); }
+.stack > i.plan { opacity: .45; }
+.stack .min { position: absolute; top: -3px; bottom: -3px; width: 3px; background: var(--text); border-radius: 2px; }
+.plan-legend { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 13px; color: var(--muted); }
+.plan-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.verdict { margin: 6px 0 0; font-size: 14px; }
 .week header { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .week .days { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 8px; }
 .week .days button { padding: 6px 2px; font-size: 12px; }

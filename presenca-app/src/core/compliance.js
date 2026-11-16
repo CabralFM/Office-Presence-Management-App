@@ -157,11 +157,18 @@ export function computeSemester({ semester, today, days, holidays, rules, defaul
   const homeWithPlan = totals.home + totals.plannedHome;
   const unplanned = undecided - totals.plannedOffice - totals.plannedHome;
   const neededAfterPlan = Math.max(0, requiredOffice - officeWithPlan);
+  // Projeção = o que já fez + o que planejou. O "crédito" é quantos dias de
+  // escritório tem a mais do que o mínimo: são dias que pode passar em casa
+  // mais à frente. Ex.: mínimo 21; feitos 8 + planejados 17 = 25 → crédito +4.
   const plan = {
     officeWithPlan,
     homeWithPlan,
     unplanned,
     neededAfterPlan,
+    projectedPct: base > 0 ? officeWithPlan / base : null,
+    credit: officeWithPlan - requiredOffice,
+    // dos dias ainda sem plano, quantos podem ser em casa sem quebrar a regra
+    homeFree: Math.max(0, unplanned - neededAfterPlan),
     feasible: neededAfterPlan <= unplanned && homeWithPlan <= maxHome,
     homeOverCap: Math.max(0, homeWithPlan - maxHome),
   };
@@ -188,14 +195,28 @@ export function computeSemester({ semester, today, days, holidays, rules, defaul
   const weeks = [...weekMap.values()];
   const months = [...monthMap.values()];
 
-  // Só se distribui pelos dias de hoje em diante (não faz sentido recomendar o passado).
-  const weekAlloc = allocate(officeNeeded, weeks.map((w) => w.open));
+  // A sugestão respeita o SEU planejamento: só distribui o que ainda falta
+  // (depois do que já fez e planejou) pelos dias que ainda não planejou.
+  // Ex.: planeja 5 dias de escritório numa semana → as outras pedem menos.
+  const unplannedOf = (b) => b.open - b.plannedOffice - b.plannedHome;
+  const weekAlloc = allocate(neededAfterPlan, weeks.map(unplannedOf));
+  let cumOffice = 0;
+  let cumBase = 0;
   weeks.forEach((w, i) => {
-    w.recommendedOffice = weekAlloc[i];
+    w.unplanned = unplannedOf(w);
+    w.suggestedOffice = weekAlloc[i]; // sugestão para os dias ainda sem plano
+    w.recommendedOffice = w.plannedOffice + w.suggestedOffice;
     w.isCurrent = today >= w.start && today <= addDays(w.start, 6);
     w.isPast = addDays(w.start, 6) < today;
+    // Acumulado até ao fim desta semana (feito + planejado): é aqui que se vê
+    // o "crédito" a crescer quando concentra dias no escritório.
+    cumOffice += w.office + w.plannedOffice;
+    cumBase += w.working - w.absence;
+    w.cumOffice = cumOffice;
+    w.cumBase = cumBase;
+    w.cumPct = cumBase > 0 ? cumOffice / cumBase : null;
   });
-  const monthAlloc = allocate(officeNeeded, months.map((m) => m.open));
+  const monthAlloc = allocate(neededAfterPlan, months.map(unplannedOf));
   months.forEach((m, i) => {
     const decided = m.office + m.home;
     const mBase = m.working - m.absence;
@@ -204,7 +225,9 @@ export function computeSemester({ semester, today, days, holidays, rules, defaul
     m.closed = m.lastWorkingDay !== null && m.lastWorkingDay < today;
     m.isCurrent = today.slice(0, 7) === m.key;
     m.target = Math.ceil(mBase * baselinePace - 1e-9); // "cota" do mês ao ritmo do semestre
-    m.recommendedOffice = monthAlloc[i];
+    m.suggestedOffice = monthAlloc[i];
+    m.recommendedOffice = m.plannedOffice + m.suggestedOffice;
+    m.projectedPct = mBase > 0 ? (m.office + m.plannedOffice) / mBase : null;
     m.neededToHitTarget = Math.max(0, m.target - m.office);
   });
 
@@ -271,16 +294,31 @@ export function buildAlerts(r) {
     add('warn', `${plural(r.unjustifiedAbsences.length, 'ausência sem justificação', 'ausências sem justificação')} (ou sem tipo): ${list}${r.unjustifiedAbsences.length > 5 ? '…' : ''}. Complete em Planejamento → Férias e ausências.`);
   }
 
+  // A regra é do PERÍODO, não do mês: se o planejamento já cumpre o período,
+  // um mês abaixo de 50% é só informação (foi compensado), não um problema.
+  const planCovers = r.officeNeeded > 0 && r.plan.neededAfterPlan === 0 && r.plan.homeOverCap === 0;
+  if (planCovers) {
+    add(
+      'ok',
+      `Com o seu planejamento, o período fecha com ${Math.round(r.plan.projectedPct * 100)}% no escritório (${r.plan.officeWithPlan} de ${r.totals.base} dias; mínimo ${r.requiredOffice})${
+        r.plan.credit > 0 ? ` — crédito de ${plural(r.plan.credit, 'dia', 'dias')} que pode passar em casa` : ''
+      }.`,
+    );
+  }
+
   // Meses fechados abaixo da percentagem
   for (const m of r.months) {
     if (m.closed && m.officePct !== null && m.officePct < r.rules.officePct / 100) {
-      add('warn', `${cap(m.name)} fechou com ${Math.round(m.officePct * 100)}% no escritório (${m.office} de ${m.office + m.home} dias), abaixo de ${pctTxt}.`);
+      add(
+        planCovers ? 'info' : 'warn',
+        `${cap(m.name)} fechou com ${Math.round(m.officePct * 100)}% no escritório (${m.office} de ${m.office + m.home} dias), abaixo de ${pctTxt}${planCovers ? ' — compensado pelo planejamento' : ''}.`,
+      );
     }
   }
 
-  // Mês corrente: aviso com antecedência
+  // Mês corrente: aviso com antecedência (desnecessário se o plano já cumpre o período)
   const cur = r.months.find((m) => m.isCurrent);
-  if (cur && cur.open > 0 && r.status !== 'cumprido') {
+  if (cur && cur.open > 0 && r.status !== 'cumprido' && !planCovers) {
     const need = cur.neededToHitTarget;
     if (need > cur.open) {
       add('danger', `${cap(cur.name)} já não fecha na meta (${cur.target} dias): mesmo indo nos ${cur.open} dias restantes, faltam ${need - cur.open}. Compense nos próximos meses.`);
@@ -297,8 +335,8 @@ export function buildAlerts(r) {
   // Próximo mês: planejamento antecipado
   const curIdx = r.months.findIndex((m) => m.isCurrent);
   const next = r.months[curIdx + 1] || (curIdx === -1 ? r.months.find((m) => !m.closed) : null);
-  if (next && next.open > 0 && r.officeNeeded > 0) {
-    add('info', `Planejamento de ${next.name}: ${next.recommendedOffice} de ${next.open} dias úteis no escritório para manter o semestre em dia.`);
+  if (next && next.open > 0 && r.officeNeeded > 0 && !planCovers) {
+    add('info', `Para ${next.name}: ${next.recommendedOffice} de ${next.open} dias úteis no escritório${next.plannedOffice ? ` (${next.plannedOffice} já planejados)` : ''} mantêm o período em dia.`);
   }
 
   // Dias de casa ainda possíveis sem quebrar a regra
@@ -309,7 +347,7 @@ export function buildAlerts(r) {
   }
 
   if (!r.plan.feasible && r.status !== 'impossivel' && (r.totals.plannedOffice || r.totals.plannedHome)) {
-    add('warn', `Seu planejamento atual não chega: faltam ${r.plan.neededAfterPlan} dias de escritório para ${r.plan.unplanned} dias ainda não planejados.`);
+    add('warn', `Seu planejamento não chega: faltam ${r.plan.neededAfterPlan} dias de escritório e só há ${r.plan.unplanned} dias por planejar.`);
   }
 
   if (r.bindingRule === 'teto') {
