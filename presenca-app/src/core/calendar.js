@@ -56,7 +56,7 @@ export function buildReminderIcs({ settings, days, holidays, from, to, appUrl, s
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Presenca//Lembretes//PT',
+    'PRODID:-//Onsitely//Reminders//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     fold(`X-WR-CALNAME:${esc(t('ics.calName'))}`),
@@ -74,6 +74,7 @@ export function buildReminderIcs({ settings, days, holidays, from, to, appUrl, s
     const where = settings.offices.length > 1 ? ` (${office.name})` : '';
     lines.push(
       'BEGIN:VEVENT',
+      // UID fixo desde a 1ª versão (antes do nome Onsitely): mudar duplicaria os eventos já importados.
       `UID:presenca-${d}@presenca.app`,
       `DTSTAMP:${icsDate(stamp)}`,
       `DTSTART:${icsDate(start)}`,

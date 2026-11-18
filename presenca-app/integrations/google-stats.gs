@@ -5,10 +5,10 @@
  *   do seu Drive, o Gmail ou o resto da conta Google.
  */
 /**
- * Presença — estatísticas anónimas de uso, numa planilha Google SUA (grátis).
+ * Onsitely — estatísticas anónimas de uso, numa planilha Google SUA (grátis).
  *
  * Cole este código em Extensões → Apps Script de uma planilha Google nova.
- * A app Presença (só nos aparelhos de quem ACEITOU partilhar estatísticas)
+ * A app Onsitely (só nos aparelhos de quem ACEITOU partilhar estatísticas)
  * envia, no máximo uma vez por dia, um "sinal de vida" com:
  *   código aleatório do aparelho, dia, versão, idioma, país do escritório,
  *   tipo de regra/período, tipo de aparelho (android/ios/desktop), se a app está
@@ -46,11 +46,11 @@ function configurar() {
 
 /** Menu na planilha. */
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('📊 Presença').addItem('Atualizar resumo agora', 'atualizarResumo').addToUi();
+  SpreadsheetApp.getUi().createMenu('📊 Onsitely').addItem('Atualizar resumo agora', 'atualizarResumo').addToUi();
 }
 
 function doGet() {
-  return ContentService.createTextOutput('Presença — estatísticas: ativo.');
+  return ContentService.createTextOutput('Onsitely — estatísticas: ativo.');
 }
 
 /** Recebe o sinal da app (POST com JSON como texto). */
@@ -179,7 +179,7 @@ function atualizarResumo() {
   const old30 = devices.filter((x) => x.first <= daysAgo(30));
 
   const main = [
-    ['Presença — estatísticas de uso', ''],
+    ['Onsitely — estatísticas de uso', ''],
     ['Atualizado em', Utilities.formatDate(new Date(), tz, 'dd/MM/yyyy HH:mm')],
     ['', ''],
     ['Aparelhos registados (aceitaram estatísticas)', total],

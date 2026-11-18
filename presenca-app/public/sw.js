@@ -42,10 +42,10 @@ self.addEventListener('push', (e) => {
   try {
     data = e.data ? e.data.json() : {};
   } catch {
-    data = { title: 'Presença', body: e.data?.text() };
+    data = { title: 'Onsitely', body: e.data?.text() };
   }
   e.waitUntil(
-    self.registration.showNotification(data.title || 'Presença', {
+    self.registration.showNotification(data.title || 'Onsitely', {
       body: data.body,
       tag: data.tag, // mesma tag → o lembrete repetido SUBSTITUI o anterior (não acumula)
       renotify: Boolean(data.tag),

@@ -1,10 +1,10 @@
 /**
- * Presença — cópia de segurança automática para o Google Drive + e-mail.
+ * Onsitely — cópia de segurança automática para o Google Drive + e-mail.
  *
  * Corre na SUA conta Google (Google Apps Script, grátis). Recebe a cópia
- * enviada pela app Presença e:
+ * enviada pela app Onsitely e:
  *   1. grava dois arquivos (.json para restaurar e .csv para abrir no Excel/
- *      Sheets) na pasta "Presença — cópias de segurança" do seu Google Drive;
+ *      Sheets) na pasta "Onsitely — cópias de segurança" do seu Google Drive;
  *   2. (opcional) envia-lhe um e-mail com os dois arquivos em anexo.
  *
  * Só aceita pedidos com a chave secreta criada pela função configurar().
@@ -14,7 +14,7 @@
  * Instruções passo a passo: integrations/google-backup.md
  */
 
-const FOLDER_NAME = 'Presença — cópias de segurança';
+const FOLDER_NAME = 'Onsitely — cópias de segurança';
 const KEEP_COPIES = 60; // guarda as 60 cópias mais recentes (mais de 1 ano se semanal)
 
 /** Corra UMA vez no editor (botão ▶ Executar) para criar a chave secreta. */
@@ -49,7 +49,7 @@ function doPost(e) {
       const to = Session.getEffectiveUser().getEmail();
       MailApp.sendEmail({
         to: to,
-        subject: 'Presença — cópia de segurança ' + name.replace('presenca-copia-', ''),
+        subject: 'Onsitely — cópia de segurança ' + name.replace(/^(presenca-copia|onsitely-backup)-/, ''),
         body: String(data.summary || '') + '\n\nPasta no Google Drive: ' + folder.getUrl(),
         attachments: [json.getBlob()].concat(csv ? [csv.getBlob()] : []),
       });

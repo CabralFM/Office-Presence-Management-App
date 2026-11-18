@@ -1,8 +1,8 @@
 # Cópia automática para o Google Drive + e-mail (grátis)
 
-A app Presença guarda os dados **só no seu celular**. Esta configuração faz com que, uma vez por semana (ou por mês), a app envie uma cópia para a **sua** conta Google:
+A app Onsitely guarda os dados **só no seu celular**. Esta configuração faz com que, uma vez por semana (ou por mês), a app envie uma cópia para a **sua** conta Google:
 
-- 📁 arquivos `.json` (para restaurar) e `.csv` (para abrir no Excel/Sheets) numa pasta **"Presença — cópias de segurança"** do seu Google Drive;
+- 📁 arquivos `.json` (para restaurar) e `.csv` (para abrir no Excel/Sheets) numa pasta **"Onsitely — cópias de segurança"** do seu Google Drive;
 - ✉️ (opcional) um e-mail para si, com os dois arquivos em anexo.
 
 **Custo: zero.** Usa o *Google Apps Script*, que corre nos servidores do Google, na sua conta. Não precisa de cartão nem de "Google Cloud". Configura-se **uma vez, em ~5 minutos, num computador**.
@@ -12,7 +12,7 @@ A app Presença guarda os dados **só no seu celular**. Esta configuração faz 
 ## 1. Criar o script
 
 1. Abra <https://script.google.com> com a sua conta Google → **Novo projeto**.
-2. Dê-lhe o nome **Presença — cópias** (clique em "Projeto sem título", no topo).
+2. Dê-lhe o nome **Onsitely — cópias** (clique em "Projeto sem título", no topo).
 3. Apague o conteúdo do editor e **cole todo o código** do arquivo [`google-backup.gs`](google-backup.gs). No GitHub, use o botão "Copy raw file".
 4. Clique em 💾 **Salvar**.
 
@@ -21,10 +21,10 @@ A app Presença guarda os dados **só no seu celular**. Esta configuração faz 
 1. No topo do editor, escolha a função **`configurar`** e clique em **▶ Executar**.
 2. O Google pede autorização:
    - escolha a sua conta;
-   - aparece **"O Google não verificou este app"** (é normal: o script é seu e não foi publicado) → **Avançado → Acessar "Presença — cópias" (não seguro)** → **Permitir**.
+   - aparece **"O Google não verificou este app"** (é normal: o script é seu e não foi publicado) → **Avançado → Acessar "Onsitely — cópias" (não seguro)** → **Permitir**.
 3. Em baixo, no **Registro de execução**, aparece: `Chave secreta (copie para a app…): 1a2b3c…`. **Copie essa chave.**
 
-O script pede acesso ao Drive (para criar a pasta e os arquivos) e ao Gmail (para enviar o e-mail a si próprio). O código só mexe na pasta "Presença — cópias de segurança".
+O script pede acesso ao Drive (para criar a pasta e os arquivos) e ao Gmail (para enviar o e-mail a si próprio). O código só mexe na pasta "Onsitely — cópias de segurança".
 
 ## 3. Publicar como "App da Web"
 
@@ -38,7 +38,7 @@ O script pede acesso ao Drive (para criar a pasta e os arquivos) e ao Gmail (par
 
 ## 4. Ligar na app
 
-No celular, na app Presença: **Ajustes → Cópia de segurança → Cópia automática para o Google**:
+No celular, na app Onsitely: **Ajustes → Cópia de segurança → Cópia automática para o Google**:
 
 1. Cole o **endereço** (`https://script.google.com/macros/s/…/exec`) e a **chave secreta**.
 2. Deixe marcado **"Enviar também por e-mail"**, se quiser o e-mail.

@@ -115,7 +115,7 @@ export default {
   'err.holiday': 'Feriado inválido: {name}',
   'err.absType': 'Tipo de ausência inválido.',
   'err.justRequired': '{label}: a justificação é obrigatória.',
-  'err.backupFile': 'Arquivo inválido: não é uma cópia de segurança da app Presença.',
+  'err.backupFile': "Arquivo inválido: não é uma cópia de segurança do Onsitely.",
   'err.backupDate': 'Data inválida na cópia: {date}',
   'err.json': 'O arquivo não é um JSON válido.',
   'err.password': 'Senha incorreta.',
@@ -123,14 +123,14 @@ export default {
   'err.justTooLong': 'Justificação demasiado longa (máx. 500 caracteres).',
 
   // ---- calendário (.ics) e cópia --------------------------------------------------
-  'ics.calName': 'Presença — lembretes',
-  'ics.summary': 'Presença: escritório ou casa?',
+  'ics.calName': "Onsitely — lembretes",
+  'ics.summary': "Onsitely: escritório ou casa?",
   'ics.description': 'Abra a app e registre onde está trabalhando hoje.',
   'ics.alarm': 'Registrar presença: escritório ou casa?',
-  'backup.sumTitle': 'Cópia de segurança da app Presença — {date}',
+  'backup.sumTitle': "Cópia de segurança do Onsitely — {date}",
   'backup.sumPeriod': '{period}: {office} dia(s) no escritório de {required} obrigatório(s); {home} em casa; {absence} ausência(s).',
   'backup.sumBase': 'Dias trabalháveis: {base}. Faltam {need} dia(s) de escritório.',
-  'backup.sumRestore': 'Para restaurar: app Presença → Ajustes → Cópia de segurança → Restaurar cópia (arquivo .json).',
+  'backup.sumRestore': "Para restaurar: Onsitely → Ajustes → Cópia de segurança → Restaurar cópia (arquivo .json).",
   // ==== INTERFACE ==================================================================
   // ---- geral --------------------------------------------------------------------
   'ui.add': 'Adicionar',
@@ -373,7 +373,7 @@ export default {
   'share.companyPh': 'Ex.: Empresa X',
   'share.button': '🔗 Compartilhar configuração',
   'share.saveFirst': 'Salve as configurações antes de compartilhar.',
-  'share.shareTitle': 'Configuração da app Presença — {company}',
+  'share.shareTitle': "Configuração do Onsitely — {company}",
   'share.ourCompany': 'a nossa empresa',
   'share.copied': 'Link copiado.',
   'share.copyManually': 'Copie o link:',
@@ -491,7 +491,7 @@ export default {
   'bk.autoNow': '☁️ Enviar cópia para o Google agora',
   'bk.importConfirm': 'Restaurar esta cópia? Os dados atuais deste aparelho serão substituídos.',
   'bk.restored': { one: 'Cópia restaurada: {n} dia.', other: 'Cópia restaurada: {n} dias.' },
-  'bk.shareTitle': 'Cópia da app Presença',
+  'bk.shareTitle': "Cópia do Onsitely",
   'bk.shared': 'Cópia enviada.',
   'bk.downloaded': 'Cópia baixada (2 arquivos).',
   'bk.unreachable': 'Não foi possível contactar o script (sem internet?).',
@@ -513,7 +513,7 @@ export default {
   'bk.testOkEmail': 'Funcionou: cópia no Drive e e-mail enviado.',
 
   // ---- assistente inicial ------------------------------------------------------------------------------
-  'wiz.welcome': 'Bem-vindo(a) à Presença',
+  'wiz.welcome': "Bem-vindo(a) ao Onsitely",
   'wiz.intro': 'Três passos rápidos para configurar. Pode mudar tudo depois em Ajustes.',
   'wiz.ruleTitle': 'Qual é a regra da sua empresa?',
   'wiz.ruleHint': 'Escolha o modelo mais parecido; afine depois em Ajustes → Regra da empresa.',
@@ -534,7 +534,7 @@ export default {
   'about.title': 'Sobre e privacidade',
   'about.open': 'Sobre, privacidade e créditos',
   'about.footer': 'Sobre · Privacidade · Créditos',
-  'about.version': 'Presença — versão {v} · grátis · código no GitHub',
+  'about.version': "Onsitely — versão {v} · grátis · código no GitHub",
   'about.privacyTitle': 'Privacidade',
   'about.privacy': 'Os seus dados ficam <b>só neste aparelho</b> (armazenamento do navegador). Não há contas, anúncios, cookies de rastreio nem serviços de terceiros de análise. A localização é lida uma única vez e nunca sai do aparelho. Só há comunicação externa quando você: busca um endereço (OpenStreetMap), envia uma cópia (Drive/e-mail que escolher) ou abre o Google Agenda.',
   'about.disclaimerTitle': 'Aviso',

@@ -1,4 +1,4 @@
-# Publica a app Presença (modo local, sem servidor) no GitHub Pages — de graça.
+# Publica a app Onsitely (modo local, sem servidor) no GitHub Pages — de graça.
 #
 # Requisitos (uma vez só):
 #   1. Repositório PÚBLICO (o GitHub Pages grátis só funciona em repositórios
@@ -9,7 +9,7 @@
 # Depois disso, cada alteração na pasta presenca-app/ na branch master publica
 # automaticamente em https://<usuario>.github.io/<repositorio>/
 
-name: Publicar Presença (GitHub Pages)
+name: Publicar Onsitely (GitHub Pages)
 
 on:
   push:

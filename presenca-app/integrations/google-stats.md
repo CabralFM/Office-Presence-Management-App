@@ -37,7 +37,7 @@ Com isto você passa a saber, numa planilha do **seu** Google Drive:
 
 ## 1. Criar a planilha e o script (≈5 min, num computador)
 
-1. Abra <https://sheets.new> (cria uma planilha Google nova) e dê-lhe o nome **Presença — estatísticas**.
+1. Abra <https://sheets.new> (cria uma planilha Google nova) e dê-lhe o nome **Onsitely — estatísticas**.
 2. Menu **Extensões → Apps Script**.
 3. Apague o conteúdo do editor e **cole todo o código** do arquivo [`google-stats.gs`](google-stats.gs). No GitHub, use o botão "Copy raw file".
 4. Clique em 💾 **Salvar**.
@@ -85,7 +85,7 @@ O endereço **não fica no código** do repositório: guarda-se como **Secret** 
    - **Name:** `PRESENCA_STATS_URL`
    - **Secret:** o URL copiado no passo 2 (`https://script.google.com/macros/s/…/exec`)
 3. **Add secret**.
-4. Separador **Actions** → **Publicar Presença (GitHub Pages)** → **Run workflow** → **Run workflow**. Em ~2 min a app publicada passa a fazer a pergunta.
+4. Separador **Actions** → **Publicar Onsitely (GitHub Pages)** → **Run workflow** → **Run workflow**. Em ~2 min a app publicada passa a fazer a pergunta.
 
 Para **parar** de recolher: apague o secret e corra de novo o *Run workflow*. A app deixa de perguntar e de enviar.
 
@@ -93,7 +93,7 @@ Para **parar** de recolher: apague o secret e corra de novo o *Run workflow*. A 
 
 ## 4. Ver os números
 
-Abra a planilha → aba **Resumo**. É atualizada sozinha todos os dias às 6h; para atualizar já, use o menu **📊 Presença → Atualizar resumo agora**.
+Abra a planilha → aba **Resumo**. É atualizada sozinha todos os dias às 6h; para atualizar já, use o menu **📊 Onsitely → Atualizar resumo agora**.
 
 | No Resumo | Significado |
 |---|---|

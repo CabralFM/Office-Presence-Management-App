@@ -14,6 +14,8 @@ import { DEFAULT_SETTINGS, deepMerge } from './settings.js';
 import { normalizeSettings } from './offices.js';
 import { mergeDay, groupAbsences, absenceDates } from './days.js';
 
+// Nomes internos do tempo em que a app se chamava "Presença": NÃO mudar — a chave guarda
+// os dados de quem já usa a app, e o formato identifica cópias de segurança antigas.
 const KEY = 'presenca:v1';
 export const BACKUP_FORMAT = 'presenca-backup';
 
