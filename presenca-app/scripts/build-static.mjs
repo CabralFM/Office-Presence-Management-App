@@ -13,6 +13,7 @@ import { build } from 'esbuild';
 import { cp, mkdir, rm, writeFile, readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { STATS_URL_RE } from '../src/core/stats.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'dist');
@@ -40,6 +41,9 @@ const result = await build({
   sourcemap: false,
   outfile: join(OUT, 'app.js'),
   plugins: [coreAlias],
+  // config.js fica FORA do pacote: é um arquivo à parte no site, para o build poder
+  // escrever nele o endereço das estatísticas (e o modo) sem recompilar a app.
+  external: ['./config.js'],
   metafile: true,
   logLevel: 'warning',
 });
@@ -47,6 +51,18 @@ const result = await build({
 for (const f of ['index.html', 'styles.css', 'sw.js', 'manifest.webmanifest', 'icon.svg', 'config.js']) {
   await cp(join(ROOT, 'public', f), join(OUT, f));
 }
+// Estatísticas anónimas (opcional): o endereço vem da variável de ambiente
+// PRESENCA_STATS_URL (no GitHub: Settings → Secrets and variables → Actions →
+// Variables). Só se aceita um endereço de Google Apps Script.
+const statsUrl = (process.env.PRESENCA_STATS_URL || '').trim();
+if (statsUrl && !STATS_URL_RE.test(statsUrl)) {
+  console.error(`PRESENCA_STATS_URL inválido (tem de ser https://script.google.com/macros/s/…/exec): ${statsUrl}`);
+  process.exit(1);
+}
+const cfg = await readFile(join(OUT, 'config.js'), 'utf8');
+await writeFile(join(OUT, 'config.js'), cfg.replace(/export const STATS_URL = '[^']*';/, `export const STATS_URL = '${statsUrl}';`));
+console.log(statsUrl ? 'Estatísticas anónimas: ligadas.' : 'Estatísticas anónimas: desligadas (PRESENCA_STATS_URL vazio).');
+
 // O GitHub Pages ignora pastas/arquivos começados por "_" sem isto.
 await writeFile(join(OUT, '.nojekyll'), '');
 

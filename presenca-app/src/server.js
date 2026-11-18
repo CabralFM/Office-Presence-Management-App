@@ -19,6 +19,7 @@ import { buildCsv } from './core/export.js';
 import { localNow } from './core/report.js';
 
 import { t, setLocale, DICTIONARIES } from './core/i18n.js';
+import { STATS_URL_RE } from './core/stats.js';
 export { validateSettingsPatch, validateOffice } from './core/api.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,7 +32,7 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
   app.use(express.json({ limit: '200kb' }));
 
   // A app no navegador lê o modo daqui (no site estático, config.js diz "local").
-  app.get('/config.js', (_req, res) => res.type('application/javascript').send("export const MODE = 'server';\n"));
+  app.get('/config.js', (_req, res) => res.type('application/javascript').send(`export const MODE = 'server';\nexport const STATS_URL = ${JSON.stringify(STATS_URL_RE.test(process.env.PRESENCA_STATS_URL || '') ? process.env.PRESENCA_STATS_URL : '')};\n`));
 
   // ---- autenticação opcional --------------------------------------------------
   // Se APP_PASSWORD estiver definida, a API exige login. Indispensável se

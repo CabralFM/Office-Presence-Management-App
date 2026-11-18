@@ -20,6 +20,8 @@ test('padrão: Portugal (Lisboa), "Escritório principal", 50% por semestre', ()
   const s = state();
   assert.equal(s.settings.offices[0].country, 'PT');
   assert.equal(s.settings.offices[0].name, 'Escritório principal');
+  assert.equal(s.settings.offices[0].timezone, 'Europe/Lisbon');
+  assert.equal(s.now.timezone, 'Europe/Lisbon');
   assert.equal(s.semester.id, '2026-2');
   assert.equal(s.semester.label, '2º semestre de 2026');
 });

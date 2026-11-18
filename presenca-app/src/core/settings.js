@@ -48,6 +48,10 @@ export const DEFAULT_SETTINGS = {
   // Cópias de segurança (modo local). autoUrl/autoToken: Google Apps Script do
   // próprio usuário (Drive + e-mail) — ver integrations/google-backup.md.
   backup: { frequency: 'weekly', lastAt: null, autoUrl: '', autoToken: '', email: true },
+  // Estatísticas anónimas de uso (ver core/stats.js): consent null = ainda não respondeu.
+  // id: código aleatório do aparelho; lastPing: último dia enviado; forgetPending: pedido
+  // de apagamento por enviar (ao desligar sem internet).
+  stats: { consent: null, id: null, firstSeen: null, lastPing: null, forgetPending: null },
 };
 
 /** Fusão profunda: objetos fundem-se; arrays e valores simples substituem. */

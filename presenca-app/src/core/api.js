@@ -264,6 +264,8 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
 }
 
 // ---- validações --------------------------------------------------------------------
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export function validateSettingsPatch(p) {
   const e = [];
   if (p.rules) {
@@ -296,6 +298,12 @@ export function validateSettingsPatch(p) {
     if (b.autoUrl !== undefined && b.autoUrl !== '' && !APPS_SCRIPT_URL_RE.test(b.autoUrl)) e.push(t('err.scriptUrl'));
     if (b.autoToken !== undefined && !(typeof b.autoToken === 'string' && b.autoToken.length <= 100)) e.push(t('err.token'));
     if (b.email !== undefined && typeof b.email !== 'boolean') e.push(t('err.generic'));
+  }
+  if (p.stats) {
+    const st = p.stats;
+    if (st.consent !== undefined && ![true, false, null].includes(st.consent)) e.push(t('err.generic'));
+    for (const k of ['id', 'forgetPending']) if (st[k] !== undefined && st[k] !== null && !UUID_RE.test(st[k])) e.push(t('err.generic'));
+    for (const k of ['firstSeen', 'lastPing']) if (st[k] !== undefined && st[k] !== null && !isDate(st[k])) e.push(t('err.date'));
   }
   if (p.location) {
     const l = p.location;

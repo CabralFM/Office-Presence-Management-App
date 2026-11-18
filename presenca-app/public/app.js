@@ -10,10 +10,11 @@ import { isBackupDue, APPS_SCRIPT_URL_RE } from './core/backup.js';
 import { ABSENCE_TYPES, ABSENCE_LABEL, ABSENCE_ICON } from './core/absences.js';
 import { RULE_TEMPLATES, matchTemplate } from './core/rule-templates.js';
 import { t, setLocale, getLocale, detectLocale, LANGUAGES, DICTIONARIES, isRtl, intlLocale, fmtDayMonth, fmtFull, fmtLong, weekdayShort, monthYear, periodLabel } from './core/i18n.js';
-import { MODE } from './config.js';
+import { MODE, STATS_URL } from './config.js';
+import { shouldAsk, shouldPing, buildPing, buildForget, newDeviceId, platformOf } from './core/stats.js';
 
-export const APP_VERSION = '2.0';
-const NEWS = ['news.v2a', 'news.v2b', 'news.v2c', 'news.v2d'];
+export const APP_VERSION = '2.1';
+const NEWS = ['news.v21', 'news.v2a', 'news.v2b', 'news.v2c', 'news.v2d'];
 
 const LOCAL = MODE === 'local';
 // No modo local o "backend" corre dentro do celular (carregado só neste modo).
@@ -157,6 +158,7 @@ function render() {
   renderCalendar();
   renderPlanning();
   renderSettings();
+  renderStats();
   showTab();
 }
 
@@ -933,7 +935,7 @@ initTimeFields();
 let settingsDirty = false;
 for (const ev of ['input', 'change']) {
   $('#settings-form').addEventListener(ev, (e) => {
-    if (!['backup-import', 'locale-select'].includes(e.target.id)) settingsDirty = true;
+    if (!['backup-import', 'locale-select', 'stats-toggle'].includes(e.target.id)) settingsDirty = true;
   });
 }
 
@@ -1431,6 +1433,8 @@ async function openWizard() {
     .map((id) => `<label><input type="radio" name="tpl" value="${id}" ${id === (current === 'custom' ? 'custom' : current) ? 'checked' : ''}/> ${h(t(`tpl.${id}`))}</label>`)
     .join('');
   await wizCountry(o.country, o.city, o.region);
+  $('#wiz-stats').hidden = !shouldAsk(STATS_URL, S.settings.stats);
+  $$('#wiz-stats input').forEach((x) => (x.checked = false));
   wizGo(1);
   $('#wizard').showModal();
 }
@@ -1510,6 +1514,8 @@ $('#wiz-next').addEventListener('click', async () => {
     $('#wizard').close();
     periodId = null;
     settingsDirty = false;
+    const statsChoice = $('#wiz-stats').hidden ? '' : f.stats.value;
+    if (statsChoice) await setStatsConsent(statsChoice === 'yes', { quiet: true });
     toast(t('wiz.saved'));
     await load();
   } catch (err) {
@@ -1518,9 +1524,76 @@ $('#wiz-next').addEventListener('click', async () => {
 });
 $('#wizard-open').addEventListener('click', () => openWizard());
 
+// ---------------------------------------------------------------- estatísticas anónimas
+// Só com consentimento explícito (nada pré-marcado). No máximo um envio por dia para a
+// planilha Google do dono da app; desligar pede o apagamento do que já foi enviado.
+// Ver src/core/stats.js e integrations/google-stats.md.
+function renderStats() {
+  const st = S.settings.stats;
+  $('#stats-ask').hidden = !(shouldAsk(STATS_URL, st) && S.settings.onboarded);
+  $('#stats-settings').hidden = !STATS_URL;
+  $('#stats-toggle').checked = st.consent === true;
+  $('#stats-info').textContent = st.consent === true && st.id ? t('stats.code', { code: st.id.slice(0, 8) }) : '';
+}
+
+async function postStats(payload) {
+  try {
+    const res = await fetch(STATS_URL, { method: 'POST', body: JSON.stringify(payload), keepalive: true });
+    return (await res.json()).ok === true;
+  } catch {
+    return false;
+  }
+}
+
+async function saveStats(patch) {
+  const r = await api('/api/settings', { method: 'PUT', body: { stats: patch } });
+  S.settings = r.settings;
+}
+
+async function setStatsConsent(yes, { quiet = false } = {}) {
+  const st = S.settings.stats;
+  if (yes) {
+    await saveStats({ consent: true, id: st.id || newDeviceId(), firstSeen: st.firstSeen || S.now.date, lastPing: null });
+    if (!quiet) toast(t('stats.thanks'));
+  } else {
+    // Desligar: o código deixa de existir aqui e pede-se o apagamento do que foi enviado.
+    await saveStats({ consent: false, id: null, firstSeen: null, lastPing: null, forgetPending: st.id || st.forgetPending || null });
+    if (!quiet) toast(t('stats.off'));
+  }
+  renderStats();
+  await statsTick();
+}
+
+let statsBusy = false;
+async function statsTick() {
+  if (!STATS_URL || !S || statsBusy) return;
+  statsBusy = true;
+  try {
+    const st = S.settings.stats;
+    if (st.forgetPending && (await postStats(buildForget(st.forgetPending)))) await saveStats({ forgetPending: null });
+    if (shouldPing(STATS_URL, S.settings.stats, S.now.date)) {
+      const payload = buildPing({
+        settings: { ...S.settings, locale: getLocale() }, // idioma em uso (mesmo que nunca escolhido)
+        today: S.now.date,
+        version: APP_VERSION,
+        ruleId: matchTemplate(S.settings.rules),
+        platform: platformOf(navigator.userAgent),
+        installed: matchMedia('(display-mode: standalone)').matches || navigator.standalone === true,
+      });
+      if (await postStats(payload)) await saveStats({ lastPing: S.now.date });
+    }
+  } finally {
+    statsBusy = false;
+  }
+}
+
+$$('#stats-ask [data-stats]').forEach((b) => b.addEventListener('click', () => setStatsConsent(b.dataset.stats === 'yes')));
+$('#stats-toggle').addEventListener('change', (e) => setStatsConsent(e.target.checked));
+
 // ---------------------------------------------------------------- sobre
 function openAbout() {
   $('#about-version').textContent = t('about.version', { v: APP_VERSION });
+  $('#about-stats').hidden = !STATS_URL;
   $('#about-news').innerHTML = NEWS.map((k) => `<li>${h(t(k))}</li>`).join('');
   $('#about-dialog').showModal();
 }
@@ -1760,6 +1833,7 @@ async function boot() {
   }
   if (params.has('checkin')) history.replaceState(null, '', location.pathname + location.hash);
   if (LOCAL) await backupOnOpen();
+  statsTick();
 }
 
 async function backupOnOpen() {
@@ -1780,4 +1854,4 @@ async function backupOnOpen() {
 useLocale(savedLocale());
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
 boot().catch((e) => console.error(e));
-document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && S && load().catch(() => {}));
+document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && S && load().then(statsTick).catch(() => {}));

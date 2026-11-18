@@ -44,6 +44,12 @@
     <section id="painel" class="tab" hidden>
       <div class="card today" id="today-card"></div>
       <div class="card" id="backup-due" hidden></div>
+      <div class="card stats-ask" id="stats-ask" hidden>
+        <h3 data-i18n="stats.title"></h3>
+        <p data-i18n="stats.question"></p>
+        <p class="hint" data-i18n="stats.what"></p>
+        <div class="row"><button type="button" class="primary" data-stats="yes" data-i18n="stats.yes"></button><button type="button" data-stats="no" data-i18n="stats.no"></button></div>
+      </div>
       <div class="card" id="semester-card"></div>
       <div class="card"><h3 data-i18n="dash.alerts"></h3><ul class="alerts" id="alerts"></ul></div>
       <div class="card"><h3 data-i18n="dash.months"></h3><div class="table-wrap"><table id="months-table"></table></div></div>
@@ -221,6 +227,11 @@
             <button type="button" id="about-open" data-i18n="about.open"></button>
             <button type="button" id="wizard-open" data-i18n="wiz.reopen"></button>
           </div>
+          <div id="stats-settings" hidden>
+            <label class="check"><input type="checkbox" id="stats-toggle" /> <span data-i18n="stats.toggle"></span></label>
+            <p class="hint" data-i18n="stats.what"></p>
+            <p class="hint" id="stats-info"></p>
+          </div>
         </div>
 
         <div class="card row sticky-actions">
@@ -333,6 +344,13 @@
           <li data-i18n="wiz.tip2"></li>
           <li data-i18n="wiz.tip3"></li>
         </ul>
+        <fieldset id="wiz-stats" class="wiz-stats" hidden>
+          <legend data-i18n="stats.title"></legend>
+          <p data-i18n="stats.question"></p>
+          <p class="hint" data-i18n="stats.what"></p>
+          <label><input type="radio" name="stats" value="yes" /> <span data-i18n="stats.yes"></span></label>
+          <label><input type="radio" name="stats" value="no" /> <span data-i18n="stats.no"></span></label>
+        </fieldset>
         <p class="hint" data-i18n="about.disclaimer"></p>
       </div>
       <div class="row end">
@@ -360,6 +378,7 @@
       <p id="about-version" class="hint"></p>
       <h4 data-i18n="about.privacyTitle"></h4>
       <p data-i18n-html="about.privacy"></p>
+      <p id="about-stats" data-i18n-html="about.privacyStats" hidden></p>
       <h4 data-i18n="about.disclaimerTitle"></h4>
       <p data-i18n="about.disclaimer"></p>
       <h4 data-i18n="about.creditsTitle"></h4>

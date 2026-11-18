@@ -42,7 +42,7 @@ export function normalizeSettings(s) {
       {
         ...DEFAULT_OFFICE,
         country: s.country || DEFAULT_OFFICE.country,
-        timezone: s.timezone || COUNTRIES[s.country || 'BR']?.timezone || DEFAULT_OFFICE.timezone,
+        timezone: s.timezone || COUNTRIES[s.country || DEFAULT_OFFICE.country]?.timezone || DEFAULT_OFFICE.timezone,
         optionalHolidays: s.optionalHolidays || DEFAULT_OFFICE.optionalHolidays,
         customHolidays: s.customHolidays || [],
         location: s.location?.office || null,

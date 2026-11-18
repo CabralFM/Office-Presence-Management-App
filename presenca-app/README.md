@@ -40,6 +40,7 @@ Aplicação web (PWA) para controlar os dias em que você trabalha **no escritó
 | **Regras de outras empresas** | Ajustes → Regra da empresa: modelos prontos (50% por semestre, 50% por mês, 60% por trimestre, 3 ou 2 dias por semana, terça e quinta fixas, 8 dias por mês) ou personalizada. *Semanal:* cada semana tem a sua meta e semanas passadas não se recuperam. *Mensal:* cada mês tem a sua cota, proporcional a férias e admissão a meio do mês. *Dias fixos:* a app avisa quando um dia fixo foi passado ou planejado em casa. |
 | **Idiomas** | Ajustes → Idioma (ou no assistente). Datas, meses e números no formato de cada idioma; árabe com o layout espelhado. Os nomes dos feriados ficam na língua do país do escritório. |
 | **Partilhar com colegas** | Ajustes → Partilhar com colegas gera um link com a regra, país, cidade e feriados do escritório principal. Quem abre vê um resumo e escolhe "Aplicar". Não vão dias, ausências, localização nem data de admissão. |
+| **Estatísticas de uso (opcional)** | Para quem distribui a app: numa planilha Google **sua**, quantas pessoas a instalaram, quantas usam hoje/7/30 dias, com que frequência, quem usou só uma vez, retenção, países, idiomas e aparelhos. **Só com consentimento** (nada pré-marcado), no máximo 1 envio por dia, sem nomes/e-mails/presenças/localização; desligar apaga o que foi enviado. Configuração: [integrations/google-stats.md](integrations/google-stats.md). |
 | **Exportar** | CSV com todos os registros (para conferência com o RH). |
 | **Cópia de segurança** | *Modo local:* semanal ou mensal. Quando vence, o Painel avisa e, com um toque, partilha `.json` (restaurar) + `.csv` (Excel) para o Drive/Gmail. **Automática e grátis:** com um Google Apps Script na sua conta, a cópia vai sozinha para uma pasta do Drive e para o seu e-mail ([instruções](integrations/google-backup.md)). |
 
@@ -108,6 +109,7 @@ presenca-app/
 │   │   ├── compliance.js    metas (%, N/semana, N/mês, dias fixos), ritmo, meses, semanas, avisos
 │   │   ├── rule-templates.js modelos de regras de empresas
 │   │   ├── i18n.js          idiomas: t('chave'), plurais, datas pelo Intl, RTL
+│   │   ├── stats.js         estatísticas anônimas (consentimento, envio 1×/dia)
 │   │   ├── locales/         um dicionário por idioma (pt-BR é a referência)
 │   │   ├── dates.js         datas ISO, períodos (mês/trimestre/semestre/ano), fusos, Páscoa
 │   │   ├── holidays.js      feriados BR/PT + outros países (date-holidays) + modelos de cidades
@@ -128,8 +130,8 @@ presenca-app/
 │   ├── local-backend.js     liga a interface a core/api.js dentro do celular
 │   └── sw.js                service worker: offline (+ push no modo servidor)
 ├── scripts/build-static.mjs ← gera o site estático em dist/ (esbuild)
-├── integrations/          ← script do Google (cópias para Drive + e-mail) e instruções
-└── test/                  ← node:test (75 testes: regras, idiomas, modo local e servidor)
+├── integrations/          ← scripts do Google: cópias (Drive + e-mail) e estatísticas de uso (planilha)
+└── test/                  ← node:test (80 testes: regras, idiomas, estatísticas, modo local e servidor)
 ```
 
 - **Por que funciona sem servidor?** Todas as regras são funções puras em `src/core/`. No modo local, a interface chama `core/api.js` diretamente dentro do celular, com os dados no armazenamento do navegador. No modo servidor, o Express chama exatamente a mesma função. Por isso os dois modos se comportam igual e os mesmos testes cobrem ambos.
@@ -142,6 +144,7 @@ presenca-app/
 - **Por que dicionários próprios e não uma biblioteca de tradução?** São ~520 textos curtos; um objeto por idioma, sem dependências, funciona offline e um teste (`test/i18n.test.js`) garante que nenhum idioma tem chaves ou marcadores `{nome}` em falta. Datas e nomes de meses vêm do `Intl` do navegador, já traduzidos.
 - **Por que o link de configuração vai no `#` do endereço?** O que vem depois do `#` nunca é enviado ao servidor (nem ao GitHub Pages): a configuração passa de celular para celular sem ser guardada em lado nenhum, e sem custo.
 - **Segurança da página:** uma Content-Security-Policy só permite scripts da própria app e ligações ao OpenStreetMap (procura de endereços) e ao Google Apps Script (cópias). No modo servidor, o login tem limite de 10 tentativas erradas por IP a cada 15 min.
+- **Por que as estatísticas vão para uma planilha Google e não para um serviço de analytics?** É grátis, os dados ficam **consigo** (no seu Drive, não num terceiro), e o Google Apps Script não entrega o IP de quem envia. Serviços como Google Analytics ou Firebase pediriam aviso de cookies, partilham dados com terceiros e medem páginas, não "pessoas que voltam". O preço: só contam quem aceita, e uma pessoa com dois aparelhos conta duas vezes.
 - **Por que a localização só no aparelho?** Privacidade: as coordenadas nunca saem do celular, e é leitura única (`getCurrentPosition`), nunca rastreio contínuo.
 
 ## Usar no celular, de graça (sem servidor)
