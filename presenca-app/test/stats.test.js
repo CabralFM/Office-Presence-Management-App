@@ -113,7 +113,7 @@ function fakeGoogle(now) {
   const ctx = {
     SpreadsheetApp: { getActive: () => ss, getUi: () => ({}) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props.get(k) ?? null, setProperty: (k, v) => props.set(k, v) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props.get(k) ?? null, setProperty: (k, v) => props.set(k, v), getProperties: () => Object.fromEntries(props), deleteProperty: (k) => props.delete(k) }) },
     ContentService: { createTextOutput: (s) => ({ s, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     Utilities: {
       formatDate: (d, _tz, fmt) => {
@@ -203,4 +203,15 @@ test('planilha: apaga dados com mais de ~13 meses', () => {
   assert.ok(!JSON.stringify(g.sheets.get('Atividade').data).includes(old));
   assert.ok(JSON.stringify(g.sheets.get('Aparelhos').data).includes(cur));
   assert.equal(g.sheets.get('Atividade').data.length, 2);
+});
+
+test('planilha: teto diário de pedidos e autorização só desta planilha', () => {
+  const g = fakeGoogle(() => Date.parse('2026-11-18T10:00:00Z'));
+  g.props.set('req:2026-11-18', '20000');
+  assert.deepEqual(g.post({ type: 'ping', v: 1, id: newDeviceId(), day: '2026-11-18' }), { ok: false, error: 'limit' });
+  assert.deepEqual(g.post({ type: 'forget', v: 1, id: newDeviceId() }), { ok: false, error: 'limit' });
+  const src = readFileSync(new URL('../integrations/google-stats.gs', import.meta.url), 'utf8');
+  assert.match(src.slice(0, 40), /@OnlyCurrentDoc/);
+  // Nenhuma resposta devolve dados da planilha: só ok/erro.
+  assert.doesNotMatch(src, /reply_\(\{[^}]*(rows|getValues|data:)/);
 });

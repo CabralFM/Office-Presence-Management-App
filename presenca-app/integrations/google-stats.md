@@ -47,7 +47,7 @@ Com isto você passa a saber, numa planilha do **seu** Google Drive:
    - aparece **"O Google não verificou este app"**: é normal, porque o script é seu e não foi publicado;
    - **Avançado → Acessar (não seguro) → Permitir**.
 
-   O script só mexe **nesta** planilha (cria as abas *Resumo*, *Aparelhos* e *Atividade*) e cria um acionador que atualiza o *Resumo* todos os dias às 6h.
+   O ecrã de permissões diz que o script quer acesso **só a esta planilha** (e a criar o acionador diário): não pede Gmail nem Drive. Cria as abas *Resumo*, *Aparelhos* e *Atividade* e um acionador que atualiza o *Resumo* todos os dias às 6h.
 
 ## 2. Publicar como "App da Web"
 
@@ -58,6 +58,23 @@ Com isto você passa a saber, numa planilha do **seu** Google Drive:
 3. **Implantar** e copie o **URL do app da Web** (termina em **`/exec`**).
 
 > "Qualquer pessoa" é necessário para os celulares conseguirem enviar sem login. O endereço fica visível no código da app, por isso o script **só aceita** pacotes no formato exato (código válido, dia de hoje, campos da lista acima), conta cada aparelho **uma vez por dia** e aceita no máximo **500 aparelhos novos por dia**. Isso limita o estrago se alguém tentar enviar dados falsos.
+
+### É seguro "Qualquer pessoa"? (sim — o que isso permite e o que não permite)
+
+O endereço `/exec` **não é uma senha nem uma porta para a sua conta**. É como o botão "enviar" de um formulário: quem o tiver só consegue fazer **o que o código do script faz**, e nada mais.
+
+| Alguém com o endereço `/exec`… | Consegue? | Porquê |
+|---|---|---|
+| ver ou mexer no seu Gmail, Drive, Docs ou outras planilhas | **Não** | O script só tem autorização para **esta** planilha (`@OnlyCurrentDoc` — o ecrã de permissões do Google mostra isso). E o código não tem nenhuma função que o faça. |
+| ler a planilha de estatísticas | **Não** | O script só responde "ok" ou "erro"; nunca devolve dados. A planilha continua **privada** (não a partilhe). |
+| ver ou alterar o código do script | **Não** | O código só se edita entrando na **sua** conta Google. O endereço só "executa". |
+| entrar na sua conta Google ou no seu GitHub | **Não** | A autorização fica guardada no Google; quem chama o endereço nunca a recebe. O repositório não tem nenhuma senha sua. |
+| apagar linhas | **Só as de um aparelho cujo código completo conheça** | Os códigos são aleatórios (36 caracteres, impossíveis de adivinhar). A app só mostra os primeiros 8. |
+| enviar estatísticas **falsas** | **Sim, com limites** | É o único risco real, e é o mesmo de qualquer site que recebe dados. O script aceita só o formato exato e o dia de hoje, conta cada aparelho 1×/dia, no máximo 500 aparelhos novos e 20 000 pedidos por dia. No pior caso, os números ficam "sujos" até apagar essas linhas — nada mais é afetado. Não há custos: o Apps Script grátis não cobra; se o teto for atingido, o script só recusa pedidos até ao dia seguinte. |
+
+**Porquê "Executar como: Eu"?** A alternativa ("usuário que acessa") obrigaria cada pessoa a entrar com uma conta Google e a autorizar o script — ninguém usaria. "Eu" significa que o script grava na **sua** planilha em seu nome, mas **só** o que o código manda.
+
+**Quer ainda mais isolamento?** Crie a planilha numa **conta Gmail nova, só para isto** (grátis). Assim, mesmo num cenário improvável, a sua conta principal nunca está envolvida.
 
 ## 3. Ligar na app publicada (GitHub, sem mexer em código)
 
