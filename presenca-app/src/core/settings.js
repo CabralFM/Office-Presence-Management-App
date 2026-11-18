@@ -11,7 +11,25 @@ export const DEFAULT_SETTINGS = {
   // Regra mãe: officePct dos dias trabalháveis. O teto absoluto de dias em casa
   // é opcional (enforceHomeCap) — ver src/core/compliance.js.
   // startDate: início da contagem (ex.: data de admissão); null = sem limite.
-  rules: { officePct: 50, maxHomeDays: 60, enforceHomeCap: false, startDate: null },
+  // Regra da empresa (ver compliance.js e rule-templates.js):
+  //   target: 'percent' | 'daysPerWeek' | 'daysPerMonth'; period: mês/trimestre/semestre/ano;
+  //   fixedDays: dias da semana sempre no escritório (ex.: [2, 4] = ter e qui).
+  rules: {
+    target: 'percent',
+    officePct: 50,
+    daysPerWeek: 3,
+    daysPerMonth: 8,
+    period: 'semester',
+    fixedDays: [],
+    maxHomeDays: 60,
+    enforceHomeCap: false,
+    startDate: null,
+  },
+  // Dias de trabalho da pessoa (0 = domingo … 6 = sábado). Ex.: [1,2,3,4] = semana de 4 dias.
+  workdays: [1, 2, 3, 4, 5],
+  locale: null, // null = idioma do aparelho
+  companyName: '', // nome da empresa/equipa (aparece no link de configuração partilhado)
+  onboarded: false, // já passou pelo assistente inicial
   reminder: {
     enabled: true,
     time: '09:00',
@@ -30,6 +48,10 @@ export const DEFAULT_SETTINGS = {
   // Cópias de segurança (modo local). autoUrl/autoToken: Google Apps Script do
   // próprio usuário (Drive + e-mail) — ver integrations/google-backup.md.
   backup: { frequency: 'weekly', lastAt: null, autoUrl: '', autoToken: '', email: true },
+  // Estatísticas anónimas de uso (ver core/stats.js): consent null = ainda não respondeu.
+  // id: código aleatório do aparelho; lastPing: último dia enviado; forgetPending: pedido
+  // de apagamento por enviar (ao desligar sem internet).
+  stats: { consent: null, id: null, firstSeen: null, lastPing: null, forgetPending: null },
 };
 
 /** Fusão profunda: objetos fundem-se; arrays e valores simples substituem. */

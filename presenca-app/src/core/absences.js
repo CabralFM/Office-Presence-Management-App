@@ -11,49 +11,38 @@
 // férias da empresa). Doença, licenças, folgas e outras exigem uma justificação
 // — é o que o RH vai pedir se a percentagem for questionada.
 
+import { t } from './i18n.js';
+
+// Rótulos e dicas vêm do idioma atual (getters: são lidos no momento do uso).
+const type = (key, icon, justificationRequired) => ({
+  icon,
+  justificationRequired,
+  get label() {
+    return t(`abs.${key}`);
+  },
+  get hint() {
+    return t(`abs.${key}.hint`);
+  },
+});
+
 export const ABSENCE_TYPES = {
-  ferias: {
-    label: 'Férias',
-    icon: '🌴',
-    justificationRequired: false,
-    hint: 'Opcional. Ex.: férias aprovadas no mapa de férias.',
-  },
-  doenca: {
-    label: 'Doença',
-    icon: '🤒',
-    justificationRequired: true,
-    hint: 'Ex.: atestado médico / baixa médica nº 123, de 03/11 a 05/11.',
-  },
-  licenca: {
-    label: 'Licença (parental, casamento, luto…)',
-    icon: '📄',
-    justificationRequired: true,
-    hint: 'Ex.: licença parental; falecimento de familiar (certidão entregue ao RH).',
-  },
-  folga: {
-    label: 'Folga / compensação',
-    icon: '🛌',
-    justificationRequired: true,
-    hint: 'Ex.: compensação de horas extra do projeto X, aprovada por Y.',
-  },
-  outro: {
-    label: 'Outra ausência',
-    icon: '📝',
-    justificationRequired: true,
-    hint: 'Descreva o motivo (ex.: doação de sangue, tribunal, formação externa).',
-  },
+  ferias: type('ferias', '🌴', false),
+  doenca: type('doenca', '🤒', true),
+  licenca: type('licenca', '📄', true),
+  folga: type('folga', '🛌', true),
+  outro: type('outro', '📝', true),
 };
 
 /** Registros antigos (antes dos tipos) ficam como "não especificado". */
 export const UNSPECIFIED = 'nao_especificado';
-export const ABSENCE_LABEL = (type) => ABSENCE_TYPES[type]?.label || 'Ausência (tipo não indicado)';
-export const ABSENCE_ICON = (type) => ABSENCE_TYPES[type]?.icon || '🚫';
+export const ABSENCE_LABEL = (k) => ABSENCE_TYPES[k]?.label || t('abs.nao_especificado');
+export const ABSENCE_ICON = (k) => ABSENCE_TYPES[k]?.icon || '🚫';
 
-export function validateAbsence({ type, justification }) {
-  const t = ABSENCE_TYPES[type];
-  if (!t) return 'Tipo de ausência inválido.';
+export function validateAbsence({ type: k, justification }) {
+  const ty = ABSENCE_TYPES[k];
+  if (!ty) return t('err.absType');
   const j = String(justification || '').trim();
-  if (t.justificationRequired && j.length < 3) return `${t.label}: a justificação é obrigatória.`;
-  if (j.length > 500) return 'Justificação demasiado longa (máx. 500 caracteres).';
+  if (ty.justificationRequired && j.length < 3) return t('err.justRequired', { label: ty.label });
+  if (j.length > 500) return t('err.justTooLong');
   return null;
 }

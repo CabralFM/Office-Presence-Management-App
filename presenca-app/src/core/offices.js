@@ -15,15 +15,16 @@
 //   3. o escritório principal.
 
 import { holidayMap, COUNTRIES, DEFAULT_OPTIONAL } from './holidays.js';
+import { t } from './i18n.js';
 import { eachDay } from './dates.js';
 
 export const DEFAULT_OFFICE = {
   id: 'principal',
-  name: 'Escritório principal',
-  country: 'BR',
+  name: '', // vazio → "Escritório principal" no idioma da tela
+  country: 'PT', // padrão: Portugal
   region: '',
   city: '', // id do modelo de cidade (feriado municipal), ex.: 'lisboa'
-  timezone: COUNTRIES.BR.timezone,
+  timezone: COUNTRIES.PT.timezone,
   location: null, // { lat, lng, label }
   radiusM: 200,
   optionalHolidays: { ...DEFAULT_OPTIONAL },
@@ -41,7 +42,7 @@ export function normalizeSettings(s) {
       {
         ...DEFAULT_OFFICE,
         country: s.country || DEFAULT_OFFICE.country,
-        timezone: s.timezone || COUNTRIES[s.country || 'BR']?.timezone || DEFAULT_OFFICE.timezone,
+        timezone: s.timezone || COUNTRIES[s.country || DEFAULT_OFFICE.country]?.timezone || DEFAULT_OFFICE.timezone,
         optionalHolidays: s.optionalHolidays || DEFAULT_OFFICE.optionalHolidays,
         customHolidays: s.customHolidays || [],
         location: s.location?.office || null,
@@ -49,7 +50,8 @@ export function normalizeSettings(s) {
       },
     ];
   }
-  out.offices = out.offices.map((o) => ({ ...DEFAULT_OFFICE, ...o }));
+  // Escritório sem nome (o padrão) → "Escritório principal" no idioma da tela.
+  out.offices = out.offices.map((o) => ({ ...DEFAULT_OFFICE, ...o, name: o.name || t('office.defaultName') }));
   if (!out.offices.some((o) => o.id === out.primaryOfficeId)) out.primaryOfficeId = out.offices[0].id;
   out.trips = Array.isArray(out.trips) ? out.trips : [];
   for (const k of ['country', 'timezone', 'optionalHolidays', 'customHolidays']) delete out[k];

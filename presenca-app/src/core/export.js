@@ -1,8 +1,19 @@
 // Exportação CSV (para o RH ou para guardar). Usada pelo servidor e pelo modo local.
 
 import { ABSENCE_LABEL } from './absences.js';
+import { t } from './i18n.js';
 
-const LABEL = { office: 'Escritório', home: 'Casa', absence: 'Ausência' };
+const LABEL = {
+  get office() {
+    return t('status.office');
+  },
+  get home() {
+    return t('status.home');
+  },
+  get absence() {
+    return t('status.absence');
+  },
+};
 // ";" separa colunas: dentro do texto vira vírgula; quebras de linha viram espaço.
 const clean = (x) => String(x ?? '').replace(/;/g, ',').replace(/[\n\r]+/g, ' ');
 

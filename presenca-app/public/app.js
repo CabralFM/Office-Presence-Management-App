@@ -1,15 +1,20 @@
-// Frontend em JavaScript puro (sem framework nem build).
-// Decisão: para uma app pessoal com 4 telas, um framework (React/Vue) traria
-// um passo de build e dependências a manter sem ganho real. Tudo aqui é
-// "render a partir do estado": cada ação chama a API e volta a desenhar.
+// Interface da app (JavaScript puro, sem framework). Tudo é "desenhar a partir do
+// estado": cada ação chama a API (no próprio celular, no modo local) e redesenha.
+//
+// Idiomas: todos os textos passam por t('chave') — ver src/core/i18n.js e
+// src/core/locales/. O HTML usa data-i18n="chave" (preenchido por applyI18n).
 
-// Caminhos relativos: a app funciona tanto na raiz de um servidor como numa
-// subpasta de um site estático (ex.: https://usuario.github.io/Office-Presence-Management-App/).
 import { assessPosition } from './core/geo.js';
-import { nowInTimeZone } from './core/dates.js';
+import { nowInTimeZone, periodOf, shiftPeriod, parsePeriodId } from './core/dates.js';
 import { isBackupDue, APPS_SCRIPT_URL_RE } from './core/backup.js';
 import { ABSENCE_TYPES, ABSENCE_LABEL, ABSENCE_ICON } from './core/absences.js';
-import { MODE } from './config.js';
+import { RULE_TEMPLATES, matchTemplate } from './core/rule-templates.js';
+import { t, setLocale, getLocale, detectLocale, LANGUAGES, DICTIONARIES, isRtl, intlLocale, fmtDayMonth, fmtFull, fmtLong, weekdayShort, monthYear, periodLabel } from './core/i18n.js';
+import { MODE, STATS_URL } from './config.js';
+import { shouldAsk, shouldPing, buildPing, buildForget, newDeviceId, platformOf } from './core/stats.js';
+
+export const APP_VERSION = '2.1';
+const NEWS = ['news.v21', 'news.v2a', 'news.v2b', 'news.v2c', 'news.v2d'];
 
 const LOCAL = MODE === 'local';
 // No modo local o "backend" corre dentro do celular (carregado só neste modo).
@@ -19,29 +24,51 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-const LABEL = { office: 'Escritório', home: 'Casa', absence: 'Ausência' };
 const ICON = { office: '🏢', home: '🏠', absence: '🌴' };
-const DOW = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-const STATUS_TXT = {
-  ok: 'Em dia', atencao: 'Atenção', critico: 'Crítico', impossivel: 'Meta inalcançável', cumprido: 'Meta cumprida', sem_contagem: 'Antes da admissão',
-};
-const fmtDM = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
-const fmtLong = (iso) => {
-  const d = new Date(iso + 'T12:00:00Z');
-  return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', timeZone: 'UTC' });
-};
-// Ícone do dia: nas ausências, o do tipo (🌴 férias, 🤒 doença…)
+const LABEL = (s) => t(`status.${s}`);
+const DOW = (wd) => weekdayShort(wd);
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]; // segunda primeiro
+const fmtDM = fmtDayMonth;
 const dayIcon = (rec) => (rec?.status === 'absence' ? ABSENCE_ICON(rec.absenceType) : ICON[rec?.status] || '');
-const dayLabel = (rec) => (rec?.status === 'absence' ? ABSENCE_LABEL(rec.absenceType) : LABEL[rec?.status] || '');
+const dayLabel = (rec) => (rec?.status === 'absence' ? ABSENCE_LABEL(rec.absenceType) : rec?.status ? LABEL(rec.status) : '');
 const pct = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`);
 
-let S = null; // último estado vindo do servidor
-let semesterId = null;
+let S = null; // último estado
+let periodId = null;
+
+// ---------------------------------------------------------------- idioma
+const LOCALE_KEY = 'presenca:locale';
+function savedLocale() {
+  try {
+    return localStorage.getItem(LOCALE_KEY);
+  } catch {
+    return null;
+  }
+}
+function useLocale(code) {
+  setLocale(code || detectLocale(navigator.languages || [navigator.language]));
+  try {
+    localStorage.setItem(LOCALE_KEY, getLocale());
+  } catch {}
+  document.documentElement.lang = getLocale();
+  document.documentElement.dir = isRtl() ? 'rtl' : 'ltr';
+  applyI18n();
+}
+/** Preenche os textos fixos do HTML (data-i18n, data-i18n-html, -ph, -aria). */
+function applyI18n(root = document) {
+  for (const el of $$('[data-i18n]', root)) el.textContent = t(el.dataset.i18n);
+  // Só textos dos dicionários da app (confiáveis) entram como HTML.
+  for (const el of $$('[data-i18n-html]', root)) el.innerHTML = t(el.dataset.i18nHtml);
+  for (const el of $$('[data-i18n-ph]', root)) el.placeholder = t(el.dataset.i18nPh);
+  for (const el of $$('[data-i18n-aria]', root)) el.setAttribute('aria-label', t(el.dataset.i18nAria));
+}
+const langOptions = (sel) =>
+  LANGUAGES.map((l) => `<option value="${l.code}" ${l.code === sel ? 'selected' : ''}>${h(l.name)}</option>`).join('');
 
 // ---------------------------------------------------------------- API
 class ApiError extends Error {
   constructor(status, data) {
-    super(data.error || `Erro ${status}`);
+    super(data.error || `${t('ui.error')} ${status}`);
     this.status = status;
     this.data = data;
   }
@@ -55,7 +82,8 @@ async function api(path, opts = {}) {
     // Sem rede: a mesma API, executada no próprio aparelho.
     ({ status, data } = (await localBackend).localRequest(method, path, opts.body ? JSON.parse(JSON.stringify(opts.body)) : {}));
   } else {
-    const res = await fetch(path.replace(/^\//, ''), {
+    const sep = path.includes('?') ? '&' : '?';
+    const res = await fetch(`${path.replace(/^\//, '')}${sep}lang=${getLocale()}`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -65,34 +93,43 @@ async function api(path, opts = {}) {
   }
   if (status === 401 && path !== '/api/login') {
     showLogin();
-    throw new ApiError(401, { error: 'Não autenticado' });
+    throw new ApiError(401, { error: t('login.required') });
   }
   if (status >= 400) throw new ApiError(status, data);
   return data;
 }
 
 function toast(msg) {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.classList.add('show');
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('show');
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => t.classList.remove('show'), 2600);
+  toast.t = setTimeout(() => el.classList.remove('show'), 2800);
 }
 
 async function load() {
-  S = await api(`/api/state${semesterId ? `?semester=${semesterId}` : ''}`);
-  semesterId = S.semester.id;
+  S = await api(`/api/state${periodId ? `?period=${periodId}` : ''}`);
+  // O idioma escolhido nos Ajustes vale em todos os aparelhos que usem a cópia.
+  if (S.settings.locale && S.settings.locale !== getLocale()) {
+    useLocale(S.settings.locale);
+    S = await api(`/api/state${periodId ? `?period=${periodId}` : ''}`);
+  }
+  periodId = S.semester.id;
   render();
 }
 
 // ---------------------------------------------------------------- navegação
 function showTab() {
   const id = (location.hash || '#painel').slice(1);
+  if (!$(`#${CSS.escape(id)}.tab`)) return;
   $$('.tab').forEach((s) => (s.hidden = s.id !== id));
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === id));
   $(`.tabs a[data-tab="${id}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
-window.addEventListener('hashchange', showTab);
+window.addEventListener('hashchange', () => {
+  if (location.hash.startsWith('#cfg=')) return checkConfigLink();
+  showTab();
+});
 
 function showLogin() {
   $$('.tab').forEach((s) => (s.hidden = true));
@@ -112,7 +149,8 @@ $('#login-form').addEventListener('submit', async (e) => {
 
 // ---------------------------------------------------------------- render
 function render() {
-  renderSemesterSelect();
+  applyI18n();
+  renderPeriodSelect();
   renderToday();
   renderSemester();
   renderAlerts();
@@ -120,79 +158,86 @@ function render() {
   renderCalendar();
   renderPlanning();
   renderSettings();
+  renderStats();
   showTab();
 }
 
-function renderSemesterSelect() {
-  const sel = $('#semester-select');
-  const y = Number(S.now.date.slice(0, 4));
+function renderPeriodSelect() {
+  const cur = periodOf(S.now.date, S.settings.rules.period);
+  const sel = parsePeriodId(periodId) || cur;
+  const back = cur.kind === 'month' ? 6 : cur.kind === 'year' ? 2 : 3;
   const opts = [];
-  for (let yr = y - 1; yr <= y + 1; yr++) for (const half of [1, 2]) opts.push(`${yr}-${half}`);
-  sel.innerHTML = opts.map((id) => `<option value="${id}" ${id === semesterId ? 'selected' : ''}>${id.replace('-', ' · ')}º sem.</option>`).join('');
+  for (let i = -back; i <= 2; i++) opts.push(shiftPeriod(cur, i));
+  if (!opts.some((p) => p.id === sel.id)) opts.push(sel);
+  $('#semester-select').innerHTML = opts.map((p) => `<option value="${p.id}" ${p.id === sel.id ? 'selected' : ''}>${h(periodLabel(p))}</option>`).join('');
 }
 $('#semester-select').addEventListener('change', (e) => {
-  semesterId = e.target.value;
+  periodId = e.target.value;
   load();
 });
 
 const officeById = (id) => S.settings.offices.find((o) => o.id === id);
 const officeName = (id) => officeById(id)?.name || '?';
 const multiOffice = () => S.settings.offices.length > 1;
-const tripFor = (date) => S.settings.trips.find((t) => t.start <= date && date <= t.end) || null;
+const tripFor = (date) => S.settings.trips.find((x) => x.start <= date && date <= x.end) || null;
 const fmtDist = (m) => (m == null ? '?' : m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
+const workdays = () => S.settings.workdays;
+const weekCols = () => WEEK_ORDER.filter((d) => workdays().includes(d));
 
 function renderToday() {
-  const t = S.today;
+  const td = S.today;
   const el = $('#today-card');
-  const expected = t.expectedOfficeId;
-  const where = t.trip
-    ? `✈️ Em viagem: <b>${h(officeName(t.trip.officeId))}</b> (${fmtDM(t.trip.start)}–${fmtDM(t.trip.end)}) — valem os feriados e o fuso deste escritório.`
+  const expected = td.expectedOfficeId;
+  const where = td.trip
+    ? t('today.trip', { office: `<b>${h(officeName(td.trip.officeId))}</b>`, from: fmtDM(td.trip.start), to: fmtDM(td.trip.end) })
     : multiOffice()
-      ? `Escritório de referência hoje: <b>${h(officeName(expected))}</b> (feriados deste local).`
+      ? t('today.refOffice', { office: `<b>${h(officeName(expected))}</b>` })
       : '';
-  const head = `<div class="big">Hoje, ${h(fmtLong(t.date))}</div>${where ? `<p class="hint">${where}</p>` : ''}<div id="tz-banner"></div>`;
+  const head = `<div class="big">${h(t('today.title', { date: fmtLong(td.date) }))}</div>${where ? `<p class="hint">${where}</p>` : ''}<div id="tz-banner"></div>`;
   const start = S.settings.rules.startDate;
-  if (start && t.date < start) {
-    el.innerHTML = `${head}<p>⏳ A contagem de presença começa em <b>${fmtDM(start)}/${start.slice(0, 4)}</b> (início da contagem, em Ajustes). Até lá não há nada a registrar.</p>`;
+  if (start && td.date < start) {
+    el.innerHTML = `${head}<p>⏳ ${t('today.beforeStart', { date: `<b>${fmtFull(start)}</b>` })}</p>`;
     renderTzBanner();
     return;
   }
-  if (!t.workingDay) {
-    el.innerHTML = `${head}<p>${t.holiday ? `🎉 Feriado: <b>${h(t.holiday.name)}</b> (${h(t.holiday.officeName)})` : 'Fim de semana — bom descanso! 😌'}</p>`;
+  if (!td.workingDay) {
+    el.innerHTML = `${head}<p>${td.holiday ? `🎉 ${t('today.holiday', { name: `<b>${h(td.holiday.name)}</b>`, office: h(td.holiday.officeName) })}` : t('today.dayOff')}</p>`;
     renderTzBanner();
     return;
   }
-  const rec = t.record;
+  const rec = td.record;
   const cur = rec?.status;
   const canGeo = S.settings.location.enabled && S.settings.offices.some((o) => o.location);
   const officeSel = multiOffice()
-    ? `<label class="inline">🏢 Em que escritório? <select id="office-pick">${S.settings.offices
+    ? `<label class="inline">🏢 ${h(t('today.whichOffice'))} <select id="office-pick">${S.settings.offices
         .map((o) => `<option value="${o.id}" ${o.id === (rec?.officeId || expected) ? 'selected' : ''}>${h(o.name)}</option>`)
         .join('')}</select></label>`
     : '';
   const geoDone = cur === 'office' && rec.source === 'localizacao';
+  let recorded = '';
+  if (cur) {
+    const what = `<b>${dayIcon(rec)} ${h(dayLabel(rec))}${cur === 'office' && multiOffice() ? ` · ${h(officeName(rec.officeId))}` : ''}</b>`;
+    const extra =
+      rec.source === 'localizacao' ? ` ${t('today.byLocation', { dist: fmtDist(rec.distance) })}` : cur === 'absence' ? ` — ${rec.justification ? h(rec.justification) : h(t('abs.noJust'))}` : '';
+    recorded = `${t('today.recorded', { what })}${extra}. ${h(t('today.canChange'))}`;
+  }
   el.innerHTML = `${head}
-    ${geoDone ? `<div class="geo-result ok-box">✅ Presença registrada pela localização: <b>Escritório${multiOffice() ? ` ${h(officeName(rec.officeId))}` : ''}</b>, a ${fmtDist(rec.distance)}.
-      <div class="row"><button id="geo-undo">↩️ Desfazer</button></div></div>` : ''}
-    <p class="hint">${
-      cur
-        ? `Registrado: <b>${dayIcon(rec)} ${dayLabel(rec)}${cur === 'office' && multiOffice() ? ` · ${h(officeName(rec.officeId))}` : ''}</b>${rec.source === 'localizacao' ? ` (pela localização, a ${fmtDist(rec.distance)})` : ''}${cur === 'absence' ? ` — ${rec.justification ? h(rec.justification) : 'sem justificação'}` : ''}. Pode alterar abaixo.`
-        : 'Onde você está trabalhando hoje?'
-    }</p>
+    ${geoDone ? `<div class="geo-result ok-box">✅ ${t('today.geoDone', { office: `<b>${h(LABEL('office'))}${multiOffice() ? ` ${h(officeName(rec.officeId))}` : ''}</b>`, dist: fmtDist(rec.distance) })}
+      <div class="row"><button id="geo-undo">↩️ ${h(t('ui.undo'))}</button></div></div>` : ''}
+    <p class="hint">${cur ? recorded : h(t('today.question'))}</p>
     <div class="choice">
-      ${['office', 'home', 'absence'].map((s) => `<button data-checkin="${s}" class="${s} ${cur === s ? 'sel' : ''}">${ICON[s]} ${LABEL[s]}</button>`).join('')}
+      ${['office', 'home', 'absence'].map((s) => `<button data-checkin="${s}" class="${s} ${cur === s ? 'sel' : ''}">${ICON[s]} ${h(LABEL(s))}</button>`).join('')}
     </div>
     ${officeSel}
-    ${canGeo && !cur ? `<button id="geo-check">📍 Verificar pela localização</button>` : ''}
+    ${canGeo && !cur ? `<button id="geo-check">📍 ${h(t('geo.check'))}</button>` : ''}
     <div id="geo-box"></div>`;
   $$('[data-checkin]', el).forEach((b) =>
     b.addEventListener('click', () =>
       b.dataset.checkin === 'absence'
-        ? openAbsence({ start: t.date, end: t.date, ...(cur === 'absence' ? absenceOf(t.date) : {}) })
+        ? openAbsence({ start: td.date, end: td.date, ...(cur === 'absence' ? absenceOf(td.date) : {}) })
         : checkin(b.dataset.checkin, 'manual', null, b.dataset.checkin === 'office' ? $('#office-pick')?.value : undefined),
     ),
   );
-  // Trocar o escritório depois de já ter registrado "Escritório" corrige o registro.
   $('#office-pick')?.addEventListener('change', (e) => cur === 'office' && checkin('office', 'manual', null, e.target.value));
   $('#geo-check', el)?.addEventListener('click', () => locationCheckin());
   $('#geo-undo', el)?.addEventListener('click', undoToday);
@@ -203,13 +248,11 @@ function renderToday() {
 async function checkin(status, source, distance = null, officeId, { quiet = false } = {}) {
   await api('/api/checkin', { method: 'POST', body: { status, source, distance, officeId } });
   geoStatus = null;
-  if (!quiet) toast(`Registrado: ${LABEL[status]}${status === 'office' && multiOffice() && officeId ? ` · ${officeName(officeId)}` : ''}`);
+  if (!quiet) toast(t('toast.recorded', { what: `${LABEL(status)}${status === 'office' && multiOffice() && officeId ? ` · ${officeName(officeId)}` : ''}` }));
   await load();
 }
 
 // ---------------------------------------------------------------- fuso horário
-// Sinal barato e sem GPS: se o fuso do aparelho for diferente do fuso do
-// escritório previsto, é provável que esteja em outro país → perguntamos.
 function deviceTimeZone() {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -217,8 +260,6 @@ function deviceTimeZone() {
     return null;
   }
 }
-
-const currentSemesterId = () => `${S.now.date.slice(0, 4)}-${Number(S.now.date.slice(5, 7)) <= 6 ? 1 : 2}`;
 
 function renderTzBanner() {
   const box = $('#tz-banner');
@@ -235,8 +276,8 @@ function renderTzBanner() {
     return;
   }
   const match = S.settings.offices.find((o) => o.timezone === tz && o.id !== exp.id);
-  box.innerHTML = `<div class="geo-result">🌍 Seu aparelho está no fuso <b>${h(tz)}</b>, mas o escritório previsto para hoje (${h(exp.name)}) usa <b>${h(exp.timezone)}</b>. Você está trabalhando em outro local?
-    <div class="row"><button id="tz-trip" class="primary">✈️ Sim, registrar viagem${match ? ` a ${h(match.name)}` : ''}</button><button id="tz-no">Não, ignorar hoje</button></div></div>`;
+  box.innerHTML = `<div class="geo-result">🌍 ${t('tz.question', { tz: `<b>${h(tz)}</b>`, office: h(exp.name), officeTz: `<b>${h(exp.timezone)}</b>` })}
+    <div class="row"><button id="tz-trip" class="primary">✈️ ${h(match ? t('tz.yesTo', { office: match.name }) : t('tz.yes'))}</button><button id="tz-no">${h(t('tz.no'))}</button></div></div>`;
   $('#tz-no').onclick = () => {
     try {
       localStorage.setItem(key, '1');
@@ -245,7 +286,7 @@ function renderTzBanner() {
   };
   $('#tz-trip').onclick = () => {
     if (!match) {
-      toast('Cadastre primeiro o escritório de destino.');
+      toast(t('tz.addOfficeFirst'));
       location.hash = '#config';
       openOffice(null, { timezone: tz });
       return;
@@ -259,49 +300,37 @@ function renderTzBanner() {
 }
 
 // ---------------------------------------------------------------- localização
-// Fluxo: (1) leitura rápida por Wi-Fi/rede (funciona dentro de edifícios);
-// (2) só se for imprecisa, tenta o GPS com mais tempo; (3) se for confiável e
-// no escritório previsto → registra sozinha (com "Desfazer"); se houver dúvida
-// ou estiver longe → pergunta numa janela por cima da tela.
-// As coordenadas nunca saem do aparelho nem são guardadas.
+// Leitura ÚNICA (nunca rastreio): rede/Wi-Fi primeiro, GPS só se for imprecisa.
+// Coordenadas nunca saem do aparelho nem são guardadas.
 function inLocationWindow() {
   const loc = S.settings.location;
-  // Hora exata DESTE momento (não a da última atualização da tela): se a app
-  // ficou aberta desde as 10h29, um toque às 15h já está fora da janela.
+  // Hora exata DESTE momento (não a da última atualização da tela).
   const m = nowInTimeZone(S.now.timezone).minutes;
   const toMin = (x) => Number(x.slice(0, 2)) * 60 + Number(x.slice(3, 5));
   return m >= toMin(loc.windowStart) && m <= toMin(loc.windowEnd);
 }
 
-const GEO_ERRORS = {
-  1: 'A permissão de localização está bloqueada para esta app. Ative-a nas configurações do navegador (cadeado ao lado do endereço → Localização → Permitir).',
-  2: 'A localização do celular não está disponível. Confirme que a Localização/GPS está ligada nas configurações do celular.',
-  3: 'O celular demorou demais a encontrar a localização (comum dentro de edifícios). Tente de novo perto de uma janela, ou registre pelos botões acima.',
-};
+const geoError = (code) => t(`geo.err${[1, 2, 3].includes(code) ? code : 0}`);
 
 function readPosition(opts) {
   return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) return reject(Object.assign(new Error('Este navegador não suporta localização.'), { code: 0 }));
-    // getCurrentPosition = leitura ÚNICA. Nunca usamos watchPosition (rastreio contínuo).
+    if (!navigator.geolocation) return reject(Object.assign(new Error(t('geo.unsupported')), { code: 0 }));
     navigator.geolocation.getCurrentPosition(
       (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
-      (err) => reject(Object.assign(new Error(GEO_ERRORS[err.code] || 'Não foi possível obter a localização.'), { code: err.code })),
+      (err) => reject(Object.assign(new Error(geoError(err.code)), { code: err.code })),
       opts,
     );
   });
 }
 
-// Teto absoluto de uma verificação: nunca mais de 2 minutos com a localização
-// em uso. (Na prática são no máximo 40 s: 10 s pela rede + 30 s pelo GPS.)
+// Teto absoluto: nunca mais de 2 min com a localização em uso (na prática ≤ 40 s).
 const GEO_MAX_MS = 120_000;
-
-/** Leitura rápida primeiro; GPS só se a rápida for imprecisa (ou falhar). */
 function getPosition(onProgress = () => {}) {
   let timer;
-  const cap = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(Object.assign(new Error(GEO_ERRORS[3]), { code: 3 })), GEO_MAX_MS);
+  const capP = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error(geoError(3)), { code: 3 })), GEO_MAX_MS);
   });
-  return Promise.race([readBestPosition(onProgress), cap]).finally(() => clearTimeout(timer));
+  return Promise.race([readBestPosition(onProgress), capP]).finally(() => clearTimeout(timer));
 }
 
 async function readBestPosition(onProgress) {
@@ -310,11 +339,11 @@ async function readBestPosition(onProgress) {
   try {
     best = await readPosition({ enableHighAccuracy: false, timeout: 10000, maximumAge: 120000 });
   } catch (e) {
-    if (e.code === 1 || e.code === 0) throw e; // sem permissão: não adianta insistir
+    if (e.code === 1 || e.code === 0) throw e;
     lastErr = e;
   }
   if (!best || best.accuracy > 100) {
-    onProgress('Melhorando a precisão com o GPS (pode levar até 30 s)…');
+    onProgress(t('geo.improving'));
     try {
       const gps = await readPosition({ enableHighAccuracy: true, timeout: 30000, maximumAge: 0 });
       if (!best || gps.accuracy < best.accuracy) best = gps;
@@ -323,11 +352,10 @@ async function readBestPosition(onProgress) {
       lastErr = e;
     }
   }
-  if (!best) throw lastErr || new Error('Não foi possível obter a localização.');
+  if (!best) throw lastErr || new Error(geoError(0));
   return best;
 }
 
-// Estado da verificação (sobrevive a re-desenhos da tela enquanto o GPS responde).
 let geoStatus = null; // { kind: 'loading' | 'error', text }
 
 function renderGeoBox() {
@@ -341,7 +369,7 @@ function renderGeoBox() {
     box.innerHTML = `<div class="geo-result"><span class="spinner"></span> 📍 ${h(geoStatus.text)}</div>`;
   } else {
     box.innerHTML = `<div class="geo-result error-box">⚠️ ${h(geoStatus.text)}
-      <div class="row"><button id="geo-retry" class="primary">📍 Tentar de novo</button></div></div>`;
+      <div class="row"><button id="geo-retry" class="primary">📍 ${h(t('geo.retry'))}</button></div></div>`;
     $('#geo-retry').onclick = () => locationCheckin();
   }
 }
@@ -349,10 +377,10 @@ function renderGeoBox() {
 async function locationCheckin({ fromLink = false } = {}) {
   const loc = S.settings.location;
   if (!inLocationWindow()) {
-    toast(`A localização só é usada entre ${loc.windowStart} e ${loc.windowEnd}${fromLink ? '. Registre pelos botões.' : '.'}`);
+    toast(t(fromLink ? 'geo.outsideLink' : 'geo.outside', { from: loc.windowStart, to: loc.windowEnd }));
     return;
   }
-  geoStatus = { kind: 'loading', text: 'Verificando sua localização…' };
+  geoStatus = { kind: 'loading', text: t('geo.checking') };
   renderGeoBox();
   let pos;
   try {
@@ -371,37 +399,35 @@ async function locationCheckin({ fromLink = false } = {}) {
   const g = assessPosition(pos, S.settings.offices, expected); // pos é descartada aqui
   if (!g) return;
   if (g.verdict === 'office') {
-    // Confiável e no escritório previsto: registra sozinha.
     await checkin('office', 'localizacao', g.distance, g.office.id, { quiet: true });
-    toast(`✅ Presença registrada: Escritório (pela localização, a ${fmtDist(g.distance)})`);
+    toast(t('geo.autoDone', { dist: fmtDist(g.distance) }));
     return;
   }
   openGeoDialog(g, expected);
 }
 
-/** Pergunta por cima da tela quando há dúvida ou está longe dos escritórios. */
 function openGeoDialog(g, expected) {
   const dlg = $('#geo-dialog');
-  const acc = g.accuracy ? ` (precisão da leitura: ±${fmtDist(g.accuracy)})` : '';
+  const acc = g.accuracy ? ` ${t('geo.accuracy', { acc: fmtDist(g.accuracy) })}` : '';
   let text;
   let buttons;
   if (g.verdict === 'probable') {
     const other = g.office.id !== expected;
-    text = `Parece que está no escritório <b>${h(g.office.name)}</b>, a ${fmtDist(g.distance)}${acc}.${
-      other ? `<br>⚠️ O previsto para hoje era <b>${h(officeName(expected))}</b>: se confirmar, valem os feriados de ${h(g.office.name)} neste dia.` : ''
-    }<br>Confirma?`;
+    text = `${t('geo.probable', { office: `<b>${h(g.office.name)}</b>`, dist: fmtDist(g.distance) })}${acc}.${
+      other ? `<br>⚠️ ${t('geo.otherOffice', { expected: `<b>${h(officeName(expected))}</b>`, office: h(g.office.name) })}` : ''
+    }<br>${h(t('geo.confirm'))}`;
     buttons = [
-      { label: `🏢 Sim, estou no escritório${multiOffice() ? ` ${h(g.office.name)}` : ''}`, cls: 'office primary-choice', go: () => checkin('office', 'localizacao', g.distance, g.office.id) },
-      { label: '🏠 Não, estou em casa', cls: 'home', go: () => checkin('home', 'manual', g.distance) },
+      { label: `🏢 ${h(t('geo.yesOffice'))}${multiOffice() ? ` ${h(g.office.name)}` : ''}`, cls: 'office primary-choice', go: () => checkin('office', 'localizacao', g.distance, g.office.id) },
+      { label: `🏠 ${h(t('geo.noHome'))}`, cls: 'home', go: () => checkin('home', 'manual', g.distance) },
     ];
   } else {
-    text = `Você está a <b>${fmtDist(g.distance)}</b> do escritório mais próximo (${h(g.office.name)})${acc}. Onde você está trabalhando hoje?`;
+    text = `${t('geo.away', { dist: `<b>${fmtDist(g.distance)}</b>`, office: h(g.office.name) })}${acc}. ${h(t('today.question'))}`;
     buttons = [
-      { label: '🏠 Em casa', cls: 'home primary-choice', go: () => checkin('home', 'localizacao', g.distance) },
-      { label: '🏢 No escritório', cls: 'office', go: () => checkin('office', 'manual', g.distance, $('#office-pick')?.value || expected) },
+      { label: `🏠 ${h(t('geo.atHome'))}`, cls: 'home primary-choice', go: () => checkin('home', 'localizacao', g.distance) },
+      { label: `🏢 ${h(t('geo.atOffice'))}`, cls: 'office', go: () => checkin('office', 'manual', g.distance, $('#office-pick')?.value || expected) },
     ];
   }
-  $('#geo-title').textContent = g.verdict === 'probable' ? '📍 Confirmar presença' : '📍 Fora do escritório';
+  $('#geo-title').textContent = `📍 ${t(g.verdict === 'probable' ? 'geo.titleConfirm' : 'geo.titleAway')}`;
   $('#geo-text').innerHTML = text;
   $('#geo-buttons').innerHTML = buttons.map((b, i) => `<button type="button" class="${b.cls}" data-i="${i}">${b.label}</button>`).join('');
   $$('#geo-buttons button').forEach((el) =>
@@ -415,55 +441,72 @@ function openGeoDialog(g, expected) {
 
 async function undoToday() {
   await api(`/api/days/${S.today.date}`, { method: 'PUT', body: { status: null } });
-  toast('Registro de hoje desfeito.');
+  toast(t('toast.undone'));
   await load();
 }
 
-// ---------------------------------------------------------------- semestre
+// ---------------------------------------------------------------- período (Painel)
+/** Descrição curta da regra: "50% dos dias trabalháveis", "3 dias por semana"… */
+function ruleText(r = S.settings.rules) {
+  const base =
+    r.target === 'daysPerWeek' ? t('rule.sumWeek', { n: r.daysPerWeek }) : r.target === 'daysPerMonth' ? t('rule.sumMonth', { n: r.daysPerMonth }) : t('rule.sumPct', { pct: r.officePct });
+  const fixed = (r.fixedDays || []).length ? ` + ${t('rule.sumFixed', { days: r.fixedDays.map(DOW).join(', ') })}` : '';
+  return `${base}${fixed} · ${t(`periodKind.${r.period || 'semester'}`)}`;
+}
+
 function renderSemester() {
   const r = S.report;
-  const t = r.totals;
+  const tt = r.totals;
+  const label = h(S.semester.label);
   if (r.notStarted) {
-    $('#semester-card').innerHTML = `<h3>${h(r.semester.label)} <span class="badge sem_contagem">${STATUS_TXT.sem_contagem}</span></h3>
-      <p class="hint">Este semestre é anterior ao início da contagem (${fmtDM(r.startDate)}/${r.startDate.slice(0, 4)}). Não há metas a cumprir.</p>`;
+    $('#semester-card').innerHTML = `<h3>${label} <span class="badge sem_contagem">${h(t('state.sem_contagem'))}</span></h3>
+      <p class="hint">${h(t('alert.notStarted', { date: fmtFull(r.startDate) }))}</p>`;
     return;
   }
-  const donePct = r.requiredOffice ? Math.min(100, (t.office / r.requiredOffice) * 100) : 100;
+  const donePct = r.requiredOffice ? Math.min(100, (tt.office / r.requiredOffice) * 100) : 100;
   const planPct = r.requiredOffice ? Math.min(100, (r.plan.officeWithPlan / r.requiredOffice) * 100) : 100;
+  const isPct = r.rules.target === 'percent';
+  const planLine =
+    r.plan.officeWithPlan > tt.office || r.plan.homeWithPlan > tt.home
+      ? `<p class="hint">🗓️ ${t('sem.withPlan', { pct: `<b>${pct(r.plan.projectedPct)}</b>` })}${
+          r.plan.neededAfterPlan === 0 && r.plan.credit > 0 ? ` · ${t('sem.credit', { n: r.plan.credit })}` : r.plan.neededAfterPlan ? ` · ${t('sem.toPlan', { n: r.plan.neededAfterPlan })}` : ''
+        }. <a href="#planejamento">${h(t('sem.seePlan'))}</a></p>`
+      : '';
+  let ruleLine = `${h(t('sem.rule'))}: <b>${h(ruleText(r.rules))}</b>`;
+  if (isPct) ruleLine += ` — ${t('sem.rulePct', { pct: r.rules.officePct, base: tt.base, n: r.requiredByPct })}`;
+  if (r.bindingRule === 'teto') ruleLine += ` — ${t('sem.ruleCap', { cap: r.homeCap, n: `<b>${r.requiredOffice}</b>` })}`;
   $('#semester-card').innerHTML = `
-    <h3>${h(r.semester.label)} <span class="badge ${r.status}">${STATUS_TXT[r.status]}</span></h3>
-    ${r.startDate ? `<p class="hint">📌 Contagem a partir de <b>${fmtDM(r.startDate)}/${r.startDate.slice(0, 4)}</b> (data de início).</p>` : ''}
-    <div class="bar" title="Escritório: feitos + planejados"><i class="plan" style="width:${planPct}%"></i><i style="width:${donePct}%"></i></div>
-    <p class="hint">${t.office} de ${r.requiredOffice} dias obrigatórios no escritório${r.plan.officeWithPlan > t.office ? ` (+${r.plan.officeWithPlan - t.office} planejados)` : ''}.
-      Regra: <b>${r.rules.officePct}% de ${t.base} dias trabalháveis = ${r.requiredByPct}</b>${
-        r.bindingRule === 'teto' ? ` — mas o teto de ${r.homeCap} dias em casa (ativo) exige <b>${r.requiredOffice}</b>` : ''
-      }.</p>
+    <h3>${label} <span class="badge ${r.status}">${h(t(`state.${r.status}`))}</span></h3>
+    ${planLine}
+    ${r.startDate ? `<p class="hint">📌 ${t('sem.since', { date: `<b>${fmtFull(r.startDate)}</b>` })}</p>` : ''}
+    <div class="bar" title="${h(t('sem.barTitle'))}"><i class="plan" style="width:${planPct}%"></i><i style="width:${donePct}%"></i></div>
+    <p class="hint">${h(t('sem.progress', { office: tt.office, required: r.requiredOffice }))}${r.plan.officeWithPlan > tt.office ? ` (+${r.plan.officeWithPlan - tt.office} ${h(t('sem.planned'))})` : ''}.<br>${ruleLine}.</p>
     <div class="stats">
-      <div class="stat"><b>${t.base}</b><span>dias trabalháveis = ${t.working} úteis − ${t.absence} ausência(s)${
-        t.absence ? ` (${Object.entries(t.absenceByType).map(([k, n]) => `${ABSENCE_ICON(k)} ${n}`).join(' ')})` : ''
+      <div class="stat"><b>${tt.base}</b><span>${h(t('sem.base', { working: tt.working, absence: tt.absence }))}${
+        tt.absence ? ` (${Object.entries(tt.absenceByType).map(([k, n]) => `${ABSENCE_ICON(k)} ${n}`).join(' ')})` : ''
       }</span></div>
-      <div class="stat"><b>${r.officeNeeded}</b><span>dias de escritório que faltam</span></div>
-      <div class="stat"><b>${Math.max(0, r.homeLeft)}</b><span>dias de casa ainda disponíveis (de ${r.maxHome})</span></div>
-      <div class="stat"><b>${t.undecided}</b><span>dias úteis por decidir${t.pending ? ` (${t.pending} sem registro)` : ''}</span></div>
-      <div class="stat"><b>${pct(r.paceNeeded)}</b><span>ritmo necessário no escritório (≈ ${r.paceNeeded == null ? '—' : (r.paceNeeded * 5).toFixed(1)} dias/semana)</span></div>
-      <div class="stat"><b>${t.office + t.home ? pct(t.office / (t.office + t.home)) : '—'}</b><span>% no escritório até agora</span></div>
+      <div class="stat"><b>${r.officeNeeded}</b><span>${h(t('sem.needed'))}</span></div>
+      <div class="stat"><b>${Math.max(0, r.homeLeft)}</b><span>${h(t('sem.homeLeft', { max: r.maxHome }))}</span></div>
+      <div class="stat"><b>${tt.undecided}</b><span>${h(t('sem.undecided'))}${tt.pending ? ` (${h(t('sem.pending', { n: tt.pending }))})` : ''}</span></div>
+      <div class="stat"><b>${pct(r.paceNeeded)}</b><span>${h(t('sem.pace', { perWeek: r.paceNeeded == null ? '—' : (r.paceNeeded * workdays().length).toLocaleString(intlLocale(), { maximumFractionDigits: 1 }) }))}</span></div>
+      <div class="stat"><b>${tt.office + tt.home ? pct(tt.office / (tt.office + tt.home)) : '—'}</b><span>${h(t('sem.soFar'))}</span></div>
     </div>`;
 }
 
 function renderAlerts() {
-  $('#alerts').innerHTML = S.report.alerts.map((a) => `<li class="${a.level}">${h(a.text)}</li>`).join('') || '<li class="ok">Nada a destacar. 👍</li>';
+  $('#alerts').innerHTML = S.report.alerts.map((a) => `<li class="${a.level}">${h(a.text)}</li>`).join('') || `<li class="ok">${h(t('dash.noAlerts'))}</li>`;
 }
 
 function renderMonths() {
   const target = S.report.rules.officePct / 100;
   $('#months-table').innerHTML = `
-    <thead><tr><th>Mês</th><th>Úteis</th><th>🏢</th><th>🏠</th><th>🌴</th><th>% esc.</th><th>Cota</th><th>Recomendado (restantes)</th></tr></thead>
+    <thead><tr><th>${h(t('mt.month'))}</th><th>${h(t('mt.workdays'))}</th><th>🏢</th><th>🏠</th><th>🌴</th><th>${h(t('mt.pct'))}</th><th>${h(t('mt.withPlan'))}</th><th>${h(t('mt.suggested'))}</th></tr></thead>
     <tbody>${S.report.months
       .map(
         (m) => `<tr class="${m.isCurrent ? 'current' : ''}">
-          <td style="text-transform:capitalize">${m.name}</td><td>${m.working}</td><td>${m.office}</td><td>${m.home}</td><td>${m.absence}</td>
+          <td style="text-transform:capitalize">${h(m.name)}</td><td>${m.working}</td><td>${m.office}</td><td>${m.home}</td><td>${m.absence}</td>
           <td class="${m.officePct == null ? '' : m.officePct < target ? 'low' : 'good'}">${pct(m.officePct)}</td>
-          <td>${m.target}</td><td>${m.open ? `${m.recommendedOffice} de ${m.open}` : '—'}</td></tr>`,
+          <td>${pct(m.projectedPct)}</td><td>${m.open ? h(t('mt.recOf', { rec: m.recommendedOffice, open: m.open })) : '—'}</td></tr>`,
       )
       .join('')}</tbody>`;
 }
@@ -474,10 +517,9 @@ function dayInfo(date) {
   const rec = S.days[date] || {};
   const wd = new Date(date + 'T12:00:00Z').getUTCDay();
   const trip = tripFor(date);
-  // Dias de viagem sem plano explícito contam como "planejado escritório" (igual ao servidor).
   const plan = rec.status ? null : rec.plan || (trip && date >= S.now.date ? 'office' : null);
   const beforeStart = Boolean(S.settings.rules.startDate && date < S.settings.rules.startDate);
-  return { hol, rec, trip, plan, beforeStart, weekend: wd === 0 || wd === 6, past: date < S.now.date, today: date === S.now.date, future: date > S.now.date };
+  return { hol, rec, trip, plan, beforeStart, wd, weekend: !workdays().includes(wd), past: date < S.now.date, today: date === S.now.date, future: date > S.now.date };
 }
 
 function dayClasses(date) {
@@ -498,64 +540,60 @@ function dayClasses(date) {
 }
 
 function renderCalendar() {
-  const { start } = S.semester;
-  const y = Number(start.slice(0, 4));
-  const m0 = Number(start.slice(5, 7));
+  const { start, end } = S.semester;
   let html = '';
-  for (let m = m0; m < m0 + 6; m++) {
+  for (let cur = start.slice(0, 7); cur <= end.slice(0, 7); ) {
+    const [y, m] = cur.split('-').map(Number);
     const first = new Date(Date.UTC(y, m - 1, 1));
-    const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    const mi = S.report.months.find((x) => x.month === m);
+    const nDays = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const mi = S.report.months.find((x) => x.key === cur);
     const lead = (first.getUTCDay() + 6) % 7; // semana começa na segunda
-    let cells = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'].map((d) => `<div class="dow">${d}</div>`).join('');
+    let cells = WEEK_ORDER.map((d) => `<div class="dow">${h(DOW(d))}</div>`).join('');
     cells += '<div class="day empty"></div>'.repeat(lead);
-    for (let d = 1; d <= days; d++) {
-      const iso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    for (let d = 1; d <= nDays; d++) {
+      const iso = `${cur}-${String(d).padStart(2, '0')}`;
       const { hol, rec, trip } = dayInfo(iso);
       const title = [
         hol && `${hol.name} (${hol.officeName})`,
-        rec.status === 'absence' && `${dayLabel(rec)}${rec.justification ? `: ${rec.justification}` : ' (sem justificação)'}`,
-        trip && `Viagem: ${officeName(trip.officeId)}`,
+        rec.status === 'absence' && `${dayLabel(rec)}${rec.justification ? `: ${rec.justification}` : ` (${t('abs.noJust')})`}`,
+        trip && `${t('cal.trip')}: ${officeName(trip.officeId)}`,
         rec.note,
-      ].filter(Boolean).join(' · ');
+      ]
+        .filter(Boolean)
+        .join(' · ');
       cells += `<button class="${dayClasses(iso)}" data-day="${iso}" title="${h(title)}">${trip ? '<span class="trip">✈️</span>' : ''}${d}${rec.status ? `<small>${dayIcon(rec)}</small>` : ''}</button>`;
     }
-    html += `<div class="month"><h3>${first.toLocaleDateString('pt-BR', { month: 'long', timeZone: 'UTC' })}
+    html += `<div class="month"><h3>${h(monthYear(`${cur}-15`))}
       <small>${mi ? `🏢 ${mi.office} · 🏠 ${mi.home} · ${pct(mi.officePct)}` : ''}</small></h3><div class="cal">${cells}</div></div>`;
+    cur = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
   }
   $('#calendar').innerHTML = html;
   $$('#calendar [data-day]').forEach((b) => b.addEventListener('click', () => openDay(b.dataset.day)));
 
-  // Lista de feriados — útil para conferir (ex.: 13/06 Lisboa sim, 24/06 Almada não).
-  const scopeTxt = { nacional: 'nacional', facultativo: 'facultativo', municipal: 'municipal', estadual: 'estadual/regional', empresa: 'empresa' };
   $('#holiday-list').innerHTML =
     Object.entries(S.holidays)
       .filter(([d]) => !S.settings.rules.startDate || d >= S.settings.rules.startDate)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([d, x]) => {
-        const wd = new Date(d + 'T12:00:00Z').getUTCDay();
-        const weekend = wd === 0 || wd === 6;
-        return `<li${weekend ? ' class="hint"' : ''}><span>${DOW[wd]} ${fmtDM(d)} — ${h(x.name)} <small>${scopeTxt[x.type] || x.type} · ${h(x.officeName)}${weekend ? ' · cai no fim de semana' : ''}</small></span></li>`;
+        const { wd, weekend } = dayInfo(d);
+        return `<li${weekend ? ' class="hint"' : ''}><span>${h(DOW(wd))} ${fmtDM(d)} — ${h(x.name)} <small>${h(t(`scope.${x.type}`))} · ${h(x.officeName)}${weekend ? ` · ${h(t('cal.onDayOff'))}` : ''}</small></span></li>`;
       })
-      .join('') || '<li class="hint">Nenhum feriado neste semestre.</li>';
+      .join('') || `<li class="hint">${h(t('cal.noHolidays'))}</li>`;
 }
 
 function openDay(date) {
-  const { hol, rec, weekend, future } = dayInfo(date);
+  const { hol, rec, weekend, future, beforeStart } = dayInfo(date);
   if (weekend) return;
-  if (dayInfo(date).beforeStart) return toast('Antes do início da contagem (data de admissão).');
-  if (hol) return toast(`Feriado: ${hol.name} (${hol.officeName})`);
+  if (beforeStart) return toast(t('toast.beforeStart'));
+  if (hol) return toast(`${t('cal.holiday')}: ${hol.name} (${hol.officeName})`);
   const dlg = $('#day-dialog');
   $('#dd-title').textContent = fmtLong(date);
-  $('#dd-sub').textContent = future
-    ? 'Dia futuro: planeje onde vai trabalhar (ou marque férias/folga).'
-    : rec.status
-      ? `Registrado: ${dayLabel(rec)}${rec.status === 'absence' ? (rec.justification ? ` — ${rec.justification}` : ' — sem justificação') : rec.source ? ` (${rec.source})` : ''}`
-      : 'Sem registro — onde trabalhou?';
+  let sub = future ? t('day.future') : rec.status ? t('day.recorded', { what: dayLabel(rec) }) : t('day.none');
+  if (rec.status === 'absence') sub += ` — ${rec.justification || t('abs.noJust')}`;
   const trip = tripFor(date);
-  if (trip) $('#dd-sub').textContent += ` ✈️ Viagem: ${officeName(trip.officeId)}.`;
+  if (trip) sub += ` ✈️ ${t('cal.trip')}: ${officeName(trip.officeId)}.`;
+  $('#dd-sub').textContent = sub;
   const field = future ? 'plan' : 'status';
-  // Dia passado com vários escritórios: em qual esteve? (define os feriados desse dia)
   const showOffice = !future && multiOffice();
   $('#dd-office-wrap').hidden = !showOffice;
   if (showOffice) {
@@ -564,14 +602,13 @@ function openDay(date) {
   }
   const cur = rec[field];
   $('#dd-buttons').innerHTML =
-    ['office', 'home'].map((s) => `<button type="button" class="${s} ${cur === s ? 'sel' : ''}" data-v="${s}">${ICON[s]} ${future ? 'Planejar ' : ''}${LABEL[s]}</button>`).join('') +
-    `<button type="button" class="absence ${rec.status === 'absence' ? 'sel' : ''}" data-v="absence">${rec.status === 'absence' ? `${dayIcon(rec)} Editar ausência` : '🌴 Férias / ausência'}</button>` +
-    `<button type="button" data-v="">Limpar</button>`;
+    ['office', 'home'].map((s) => `<button type="button" class="${s} ${cur === s ? 'sel' : ''}" data-v="${s}">${ICON[s]} ${h(future ? t('day.plan', { what: LABEL(s) }) : LABEL(s))}</button>`).join('') +
+    `<button type="button" class="absence ${rec.status === 'absence' ? 'sel' : ''}" data-v="absence">${rec.status === 'absence' ? `${dayIcon(rec)} ${h(t('day.editAbsence'))}` : `🌴 ${h(t('day.absence'))}`}</button>` +
+    `<button type="button" data-v="">${h(t('ui.clear'))}</button>`;
   $('#dd-note').value = rec.note || '';
   $$('#dd-buttons button').forEach((b) =>
     b.addEventListener('click', async () => {
       if (b.dataset.v === 'absence') {
-        // Ausência tem tipo, período e justificação → diálogo próprio.
         dlg.close();
         openAbsence({ start: date, end: date, ...(rec.status === 'absence' ? absenceOf(date) : {}) });
         return;
@@ -587,42 +624,159 @@ function openDay(date) {
 }
 
 // ---------------------------------------------------------------- planejamento
+function addDaysIso(iso, n) {
+  const d = new Date(iso + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+/** Dias de trabalho de uma semana (que começa na segunda `start`). */
+const weekDates = (start) => weekCols().map((wd) => addDaysIso(start, (wd + 6) % 7));
+
+function editable(d) {
+  const { hol, rec, future, today, beforeStart, weekend } = dayInfo(d);
+  return d >= S.semester.start && d <= S.semester.end && !weekend && !hol && (future || today) && !rec.status && !beforeStart;
+}
+
 function renderPlanning() {
   const r = S.report;
-  $('#plan-summary').innerHTML = `
-    <h3>Projeção do semestre</h3>
-    <p>Feitos: <b>${r.totals.office}</b> no escritório · Planejados: <b>${r.totals.plannedOffice}</b> · Meta: <b>${r.requiredOffice}</b></p>
-    <p>${
-      r.plan.neededAfterPlan === 0
-        ? '✅ Com o que já fez e planejou, a meta do semestre fica cumprida.'
-        : `Ainda precisa planejar <b>${r.plan.neededAfterPlan}</b> dia(s) de escritório entre os <b>${r.plan.unplanned}</b> dias úteis sem plano.`
-    }${r.plan.homeOverCap ? ` ⚠️ O plano excede o limite de casa em ${r.plan.homeOverCap} dia(s).` : ''}</p>
-    <div class="row"><button id="auto-plan">✨ Sugerir plano automático para as próximas 4 semanas</button></div>`;
-  $('#auto-plan').onclick = autoPlan;
   renderTrips();
   renderAbsences();
-
-  const weeks = r.weeks.filter((w) => !w.isPast);
+  const target = r.rules.target;
+  $('#plan-hint').innerHTML = t(target === 'percent' ? 'plan.hintPct' : target === 'daysPerWeek' ? 'plan.hintWeek' : 'plan.hintMonth');
+  if (r.notStarted) {
+    $('#plan-bar').innerHTML = `<p class="hint">${h(t('plan.notStarted'))}</p>`;
+    $('#plan-detail').innerHTML = '';
+    $('#weeks').innerHTML = '';
+    $('#plan-actions').innerHTML = '';
+    return;
+  }
+  renderPlanBar(r);
+  const pctT = r.baselinePace;
+  const cols = weekCols();
+  const weekHtml = (w) => {
+    const days = weekDates(w.start).map((d) => {
+      const { hol, rec, plan, trip, beforeStart, wd } = dayInfo(d);
+      const inP = d >= S.semester.start && d <= S.semester.end;
+      const cls = rec.status || (plan ? `plan-${plan}` : '');
+      const lbl = !inP || beforeStart ? '–' : hol ? '🎉' : rec.status ? dayIcon(rec) : plan ? ICON[plan] + (trip ? '✈️' : '') : '·';
+      const fixed = (r.rules.fixedDays || []).includes(wd) ? ' fixed' : '';
+      return `<button data-plan="${d}" class="${cls}${fixed}" ${editable(d) ? '' : 'disabled'} title="${h(hol?.name || '')}">${h(DOW(wd))} ${fmtDM(d)}<br>${lbl}</button>`;
+    });
+    const off = w.office + w.plannedOffice;
+    const home = w.home + w.plannedHome;
+    const anyEditable = weekDates(w.start).some(editable);
+    const goal = target === 'daysPerWeek' ? ` · ${h(t('plan.weekGoal', { office: off, target: w.target }))}${w.isPast ? (w.met ? ' ✅' : ' ❌') : ''}` : '';
+    const cum = w.cumPct == null || target === 'daysPerWeek' ? '' : `<span class="cum ${w.cumPct + 1e-9 >= pctT ? 'good' : 'low'}" title="${h(t('plan.cumTitle'))}">${h(t('plan.cum', { pct: pct(w.cumPct), office: w.cumOffice, base: w.cumBase }))}</span>`;
+    return `<div class="week ${w.isCurrent ? 'current' : ''} ${w.isPast ? 'past' : ''}">
+        <header><b>${h(w.isCurrent ? t('plan.thisWeek') : t('plan.weekOf', { date: fmtDM(w.start) }))}</b>
+          <span>🏢 ${off} · 🏠 ${home}${w.absence ? ` · 🌴 ${w.absence}` : ''}${w.unplanned ? ` · ${h(t('plan.free', { n: w.unplanned }))}` : ''}${goal} ${cum}</span></header>
+        ${w.holidayList.length ? `<small class="hint">🎉 ${h(w.holidayList.map((x) => `${fmtDM(x.date)} ${x.name}`).join(', '))}</small>` : ''}
+        <div class="days" style="grid-template-columns:repeat(${cols.length},minmax(0,1fr))">${days.join('')}</div>
+        ${w.suggestedOffice ? `<p class="hint suggest">💡 ${h(t('plan.suggest', { n: w.suggestedOffice }))}</p>` : ''}
+        ${anyEditable ? `<div class="week-actions">
+          <button data-week="${w.start}" data-set="office">🏢 ${h(t('plan.allOffice'))}</button>
+          <button data-week="${w.start}" data-set="home">🏠 ${h(t('plan.allHome'))}</button>
+          <button data-week="${w.start}" data-set="vacation">🌴 ${h(t('abs.ferias'))}</button>
+          <button data-week="${w.start}" data-set="clear">${h(t('ui.clear'))}</button></div>` : ''}
+      </div>`;
+  };
+  const past = r.weeks.filter((w) => w.isPast);
+  const coming = r.weeks.filter((w) => !w.isPast);
   $('#weeks').innerHTML =
-    weeks
-      .map((w) => {
-        const days = [0, 1, 2, 3, 4].map((i) => {
-          const d = addDaysIso(w.start, i);
-          const inSem = d >= S.semester.start && d <= S.semester.end;
-          const { hol, rec, plan, trip, future, today } = dayInfo(d);
-          const disabled = !inSem || hol || (!future && !today) || rec.status || dayInfo(d).beforeStart;
-          const cls = rec.status || (plan ? `plan-${plan}` : '');
-          const lbl = hol ? '🎉' : rec.status ? dayIcon(rec) : plan ? ICON[plan] + (trip ? '✈️' : '') : '·';
-          return `<button data-plan="${d}" class="${cls}" ${disabled ? 'disabled' : ''} title="${h(hol?.name || '')}">${DOW[i + 1]} ${fmtDM(d)}<br>${lbl}</button>`;
-        });
-        const planned = w.plannedOffice + w.office;
-        return `<div class="week ${w.isCurrent ? 'current' : ''}">
-          <header><b>${w.isCurrent ? 'Esta semana' : `Semana de ${fmtDM(w.start)}`}</b>
-            <span>Recomendado: <b>${w.recommendedOffice}</b> ${w.recommendedOffice === 1 ? 'dia' : 'dias'} 🏢 · planejado/feito: ${planned}${w.holidayList.length ? ` · feriado: ${h(w.holidayList.map((x) => x.name).join(', '))}` : ''}</span></header>
-          <div class="days">${days.join('')}</div></div>`;
-      })
-      .join('') || '<p class="hint">Semestre encerrado.</p>';
+    (past.length ? `<details class="past-weeks"><summary>${h(t('plan.pastWeeks', { n: past.length }))}</summary>${past.map(weekHtml).join('')}</details>` : '') +
+    (coming.map(weekHtml).join('') || `<p class="hint">${h(t('plan.ended'))}</p>`);
   $$('#weeks [data-plan]').forEach((b) => b.addEventListener('click', () => cyclePlan(b.dataset.plan)));
+  $$('#weeks [data-week]').forEach((b) => b.addEventListener('click', () => setWeek(b.dataset.week, b.dataset.set)));
+
+  $('#plan-actions').innerHTML = `<div class="row">
+      ${r.plan.unplanned ? `<button id="auto-plan">✨ ${h(t('plan.autoFill'))}</button>` : ''}
+      ${r.totals.plannedOffice || r.totals.plannedHome ? `<button id="clear-plan">↺ ${h(t('plan.clearAll'))}</button>` : ''}</div>
+    <p class="hint">${h(t('plan.tapHint'))}</p>`;
+  $('#auto-plan')?.addEventListener('click', autoPlan);
+  $('#clear-plan')?.addEventListener('click', clearPlan);
+}
+
+/** Barra de projeção: feito + planejado vs. o mínimo, e o "crédito". */
+function renderPlanBar(r) {
+  const tt = r.totals;
+  const p = r.plan;
+  const base = tt.base || 1;
+  const seg = (n, cls, title) => (n > 0 ? `<i class="${cls}" style="width:${(n / base) * 100}%" title="${h(title)}: ${n}"></i>` : '');
+  const minPct = (r.requiredOffice / base) * 100;
+  let verdict;
+  if (p.homeOverCap) verdict = `<span class="low">⚠️ ${h(t('plan.overCap', { n: p.homeOverCap }))}</span>`;
+  else if (p.fixedPlannedHome.length) verdict = `<span class="low">⚠️ ${h(t('alert.fixedPlannedHome', { list: p.fixedPlannedHome.map(fmtDM).join(', ') }))}</span>`;
+  else if (p.neededAfterPlan === 0)
+    verdict = `<span class="good">✅ ${h(p.credit > 0 ? t(p.unplanned ? 'plan.okCreditFree' : 'plan.okCredit', { n: p.credit, free: p.unplanned }) : t(p.unplanned ? 'plan.okFree' : 'plan.ok', { free: p.unplanned }))}</span>`;
+  else if (p.neededAfterPlan <= p.unplanned) verdict = h(t('plan.missing', { n: p.neededAfterPlan, free: p.unplanned, home: p.homeFree }));
+  else verdict = `<span class="low">❌ ${h(t('plan.notEnough', { n: p.neededAfterPlan, free: p.unplanned }))}</span>`;
+  const short = p.homeOverCap
+    ? `<span class="low">${h(t('plan.shortOverCap'))}</span>`
+    : p.neededAfterPlan === 0
+      ? `<span class="good">✅ ${h(r.rules.target === 'percent' ? t('plan.shortCredit', { n: p.credit > 0 ? `+${p.credit}` : '0' }) : t('plan.shortOk'))}</span>`
+      : `<span class="low">${h(t('plan.shortMissing', { n: p.neededAfterPlan }))}</span>`;
+  $('#plan-bar').innerHTML = `
+    <div class="plan-head"><b>${h(t('plan.head', { pct: pct(p.projectedPct) }))}</b> <span class="hint">${h(t('plan.min', { rule: ruleText(r.rules), required: r.requiredOffice, base: tt.base }))}</span> ${short}</div>
+    <div class="stack" role="img" aria-label="${h(t('plan.head', { pct: pct(p.projectedPct) }))}">
+      ${seg(tt.office, 's-office', t('plan.segOffice'))}${seg(tt.plannedOffice, 's-office plan', t('plan.segOfficePlan'))}${seg(tt.home, 's-home', t('plan.segHome'))}${seg(tt.plannedHome, 's-home plan', t('plan.segHomePlan'))}${seg(p.unplanned - tt.pending, 's-free', t('plan.segFree'))}${seg(tt.pending, 's-free', t('cal.pending'))}
+      <b class="min" style="left:${minPct}%" title="${h(t('plan.minimum'))}"></b>
+    </div>`;
+  $('#plan-detail').innerHTML = `
+    <div class="plan-legend"><span><i class="s-office"></i>🏢 ${h(t('plan.legendOffice', { done: tt.office, planned: tt.plannedOffice }))} = <b>${p.officeWithPlan}</b></span>
+      <span><i class="s-home"></i>🏠 ${tt.home} + ${tt.plannedHome} = <b>${p.homeWithPlan}</b></span>
+      <span><i class="s-free"></i>${h(t('plan.legendFree', { n: p.unplanned - tt.pending }))}${tt.pending ? ` · ${h(t('sem.pending', { n: tt.pending }))}` : ''}</span>${tt.absence ? `<span>🌴 ${h(t('plan.outOfBase', { n: tt.absence }))}</span>` : ''}</div>
+    <p class="verdict">${verdict}</p>`;
+}
+
+async function putPlans(dates, plan) {
+  for (const d of dates) await api(`/api/days/${d}`, { method: 'PUT', body: { plan } });
+}
+
+async function setWeek(start, what) {
+  const dates = weekDates(start).filter(editable);
+  if (!dates.length) return;
+  if (what === 'vacation') return openAbsence({ type: 'ferias', start: dates[0], end: dates[dates.length - 1] });
+  await putPlans(dates, what === 'clear' ? null : what);
+  await load();
+}
+
+async function clearPlan() {
+  if (!confirm(t('plan.clearConfirm'))) return;
+  const dates = Object.entries(S.days)
+    .filter(([d, r]) => d >= S.now.date && !r.status && (r.plan === 'office' || r.plan === 'home'))
+    .map(([d]) => d);
+  await putPlans(dates, null);
+  toast(t('plan.cleared', { n: dates.length }));
+  await load();
+}
+
+async function cyclePlan(date) {
+  // livre → escritório → casa → livre
+  const cur = S.days[date]?.plan || null;
+  const next = cur === null ? 'office' : cur === 'office' ? 'home' : null;
+  await api(`/api/days/${date}`, { method: 'PUT', body: { plan: next } });
+  await load();
+}
+
+/** Preenche os dias LIVRES com a sugestão (dias fixos primeiro, depois ter–qui). Não mexe no que já planejou. */
+async function autoPlan() {
+  const fixed = S.settings.rules.fixedDays || [];
+  const prefer = [...fixed, 2, 3, 4, 1, 5, 6, 0];
+  const writes = [];
+  for (const w of S.report.weeks.filter((x) => !x.isPast)) {
+    const free = weekDates(w.start)
+      .filter((d) => editable(d) && !dayInfo(d).plan)
+      .map((d) => ({ d, wd: dayInfo(d).wd }));
+    free.sort((a, b) => prefer.indexOf(a.wd) - prefer.indexOf(b.wd));
+    let need = w.suggestedOffice;
+    for (const f of free) {
+      writes.push({ d: f.d, plan: need > 0 ? 'office' : 'home' });
+      if (need > 0) need--;
+    }
+  }
+  for (const w of writes) await api(`/api/days/${w.d}`, { method: 'PUT', body: { plan: w.plan } });
+  toast(t('plan.filled', { n: writes.length }));
+  await load();
 }
 
 // ---------------------------------------------------------------- férias e ausências
@@ -636,12 +790,12 @@ function renderAbsences() {
     S.absences
       .map((a) => {
         const missing = a.type === 'nao_especificado' || (ABSENCE_TYPES[a.type]?.justificationRequired && !a.justification);
-        const period = a.start === a.end ? `${fmtDM(a.start)}` : `${fmtDM(a.start)} – ${fmtDM(a.end)}`;
-        return `<li><span>${ABSENCE_ICON(a.type)} <b>${h(ABSENCE_LABEL(a.type))}</b> · ${period} · ${a.days} dia(s) útil(eis)<br>
-          <small>${a.justification ? h(a.justification) : missing ? '<span class="warn-txt">⚠️ falta justificação / tipo</span>' : 'sem justificação'}</small></span>
-          <span class="actions"><button type="button" data-ab-edit="${a.id}">Editar</button><button type="button" data-ab-del="${a.id}" title="Remover">✖</button></span></li>`;
+        const period = a.start === a.end ? fmtDM(a.start) : `${fmtDM(a.start)} – ${fmtDM(a.end)}`;
+        return `<li><span>${ABSENCE_ICON(a.type)} <b>${h(ABSENCE_LABEL(a.type))}</b> · ${period} · ${h(t('abs.days', { n: a.days }))}<br>
+          <small>${a.justification ? h(a.justification) : missing ? `<span class="warn-txt">⚠️ ${h(t('abs.missingJust'))}</span>` : h(t('abs.noJust'))}</small></span>
+          <span class="actions"><button type="button" data-ab-edit="${a.id}">${h(t('ui.edit'))}</button><button type="button" data-ab-del="${a.id}" title="${h(t('ui.remove'))}">✖</button></span></li>`;
       })
-      .join('') || '<li class="hint">Nenhuma ausência neste semestre.</li>';
+      .join('') || `<li class="hint">${h(t('abs.none'))}</li>`;
   $$('[data-ab-edit]').forEach((b) =>
     b.addEventListener('click', () => {
       const a = S.absences.find((x) => x.id === b.dataset.abEdit);
@@ -650,9 +804,9 @@ function renderAbsences() {
   );
   $$('[data-ab-del]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Remover esta ausência? Os dias voltam a ficar sem registro.')) return;
+      if (!confirm(t('abs.removeConfirm'))) return;
       await api(`/api/absences/${b.dataset.abDel}`, { method: 'DELETE' });
-      toast('Ausência removida');
+      toast(t('abs.removed'));
       await load();
     }),
   );
@@ -662,13 +816,13 @@ let absenceEditId = null;
 function openAbsence({ id = null, type = 'ferias', justification = '', start = S.now.date, end } = {}) {
   absenceEditId = id;
   const f = $('#absence-form');
-  $('#ab-title').textContent = id ? 'Editar ausência' : 'Registrar férias / ausência';
+  $('#ab-title').textContent = t(id ? 'abs.editTitle' : 'abs.newTitle');
   $('#ab-types').innerHTML =
-    '<legend>Tipo</legend>' +
+    `<legend>${h(t('abs.type'))}</legend>` +
     Object.entries(ABSENCE_TYPES)
-      .map(([k, t]) => `<label><input type="radio" name="type" value="${k}" ${k === type ? 'checked' : ''}/> ${t.icon} ${h(t.label)}</label>`)
+      .map(([k, ty]) => `<label><input type="radio" name="type" value="${k}" ${k === type ? 'checked' : ''}/> ${ty.icon} ${h(ty.label)}</label>`)
       .join('');
-  if (!ABSENCE_TYPES[type]) f.querySelector('input[name=type]').checked = true; // registros antigos sem tipo
+  if (!ABSENCE_TYPES[type]) f.querySelector('input[name=type]').checked = true;
   f.start.value = start;
   f.end.value = end || start;
   f.justification.value = justification || '';
@@ -680,11 +834,11 @@ function openAbsence({ id = null, type = 'ferias', justification = '', start = S
 
 function updateAbsenceHint() {
   const f = $('#absence-form');
-  const t = ABSENCE_TYPES[f.querySelector('input[name=type]:checked').value];
-  $('#ab-just-label').textContent = t.justificationRequired ? 'Justificação (obrigatória)' : 'Justificação (opcional)';
-  f.justification.required = t.justificationRequired;
-  f.justification.placeholder = t.hint;
-  $('#ab-hint').textContent = t.hint;
+  const ty = ABSENCE_TYPES[f.querySelector('input[name=type]:checked').value];
+  $('#ab-just-label').textContent = t(ty.justificationRequired ? 'abs.justRequired' : 'abs.justOptional');
+  f.justification.required = ty.justificationRequired;
+  f.justification.placeholder = ty.hint;
+  $('#ab-hint').textContent = ty.hint;
 }
 
 $('#absence-form').start.addEventListener('change', (e) => {
@@ -709,14 +863,14 @@ async function saveAbsence(overwrite = false) {
     if (err.status === 409) {
       const c = err.data.conflicts;
       const list = c.slice(0, 6).map(fmtDM).join(', ');
-      if (confirm(`${err.message} (${list}${c.length > 6 ? '…' : ''}). Substituir por ausência?`)) return saveAbsence(true);
+      if (confirm(t('abs.replaceConfirm', { msg: err.message, list: `${list}${c.length > 6 ? '…' : ''}` }))) return saveAbsence(true);
       return;
     }
     $('#ab-error').textContent = err.message;
     return;
   }
   $('#absence-dialog').close();
-  toast(`${data.label}: ${data.days} dia(s) útil(eis) registrado(s)`);
+  toast(t('abs.saved', { label: data.label, n: data.days }));
   await load();
 }
 $('#ab-save').addEventListener('click', () => saveAbsence());
@@ -725,17 +879,16 @@ $('#absence-add').addEventListener('click', () => openAbsence());
 function renderTrips() {
   const f = $('#trip-form');
   const keep = f.officeId.value;
-  // Escritórios não principais primeiro (são os destinos típicos de viagem).
   const opts = [...S.settings.offices].sort((a, b) => (a.id === S.settings.primaryOfficeId) - (b.id === S.settings.primaryOfficeId));
   f.officeId.innerHTML = opts.map((o) => `<option value="${o.id}">${h(o.name)}</option>`).join('');
   if (keep) f.officeId.value = keep;
   $('#trips').innerHTML =
     S.settings.trips
       .map(
-        (t) => `<li><span>✈️ <b>${h(officeName(t.officeId))}</b> · ${fmtDM(t.start)}/${t.start.slice(0, 4)} – ${fmtDM(t.end)}/${t.end.slice(0, 4)}${t.note ? ` <small>${h(t.note)}</small>` : ''}</span>
-          <span class="actions"><button type="button" data-trip-del="${t.id}">✖</button></span></li>`,
+        (x) => `<li><span>✈️ <b>${h(officeName(x.officeId))}</b> · ${fmtFull(x.start)} – ${fmtFull(x.end)}${x.note ? ` <small>${h(x.note)}</small>` : ''}</span>
+          <span class="actions"><button type="button" data-trip-del="${x.id}" title="${h(t('ui.remove'))}">✖</button></span></li>`,
       )
-      .join('') || `<li class="hint">Nenhuma viagem registrada.${multiOffice() ? '' : ' Cadastre primeiro os escritórios de destino em Ajustes.'}</li>`;
+      .join('') || `<li class="hint">${h(t('trip.none'))}${multiOffice() ? '' : ` ${h(t('trip.addOfficesFirst'))}`}</li>`;
   $$('[data-trip-del]').forEach((b) =>
     b.addEventListener('click', async () => {
       await api(`/api/trips/${b.dataset.tripDel}`, { method: 'DELETE' });
@@ -750,85 +903,50 @@ $('#trip-form').addEventListener('submit', async (e) => {
   try {
     await api('/api/trips', { method: 'POST', body: { officeId: f.officeId.value, start: f.start.value, end: f.end.value, note: f.note.value } });
     f.reset();
-    toast('Viagem registrada');
+    toast(t('trip.saved'));
     await load();
   } catch (err) {
     toast(err.message);
   }
 });
 
-function addDaysIso(iso, n) {
-  const d = new Date(iso + 'T12:00:00Z');
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-async function cyclePlan(date) {
-  // nenhum → escritório → casa → nenhum
-  const cur = S.days[date]?.plan || null;
-  const next = cur === null ? 'office' : cur === 'office' ? 'home' : null;
-  await api(`/api/days/${date}`, { method: 'PUT', body: { plan: next } });
-  await load();
-}
-
-/** Preenche as próximas 4 semanas com a recomendação, preferindo terça a quinta. */
-async function autoPlan() {
-  const prefer = [2, 3, 4, 1, 5]; // ter, qua, qui, seg, sex
-  const writes = [];
-  for (const w of S.report.weeks.filter((x) => !x.isPast).slice(0, 4)) {
-    const free = [];
-    for (let i = 0; i < 5; i++) {
-      const d = addDaysIso(w.start, i);
-      const { hol, rec, plan, future, today } = dayInfo(d);
-      if (d < S.semester.start || d > S.semester.end || hol || rec.status || plan || (!future && !today)) continue;
-      free.push({ d, wd: i + 1 });
-    }
-    free.sort((a, b) => prefer.indexOf(a.wd) - prefer.indexOf(b.wd));
-    let need = Math.max(0, w.recommendedOffice - w.plannedOffice);
-    for (const f of free) {
-      writes.push({ d: f.d, plan: need > 0 ? 'office' : 'home' });
-      if (need > 0) need--;
-    }
-  }
-  for (const w of writes) await api(`/api/days/${w.d}`, { method: 'PUT', body: { plan: w.plan } });
-  toast(`${writes.length} dia(s) planejados`);
-  await load();
-}
-
-// ---------------------------------------------------------------- configurações
-// ---- campos de hora (listas em vez do relógio nativo) -------------------------
+// ---------------------------------------------------------------- ajustes
+// Campos de hora em listas (o relógio nativo do Android corta o botão OK com letra grande).
 const pad2 = (n) => String(n).padStart(2, '0');
 function initTimeFields() {
   for (const el of $$('.time-field')) {
     const n = el.dataset.name;
     const hours = Array.from({ length: 24 }, (_, i) => `<option>${pad2(i)}</option>`).join('');
     const mins = Array.from({ length: 12 }, (_, i) => `<option>${pad2(i * 5)}</option>`).join('');
-    el.innerHTML = `<select name="${n}H" aria-label="Hora">${hours}</select><b>:</b><select name="${n}M" aria-label="Minutos">${mins}</select>`;
+    el.innerHTML = `<select name="${n}H">${hours}</select><b>:</b><select name="${n}M">${mins}</select>`;
   }
 }
 function setTime(form, n, value) {
   const [hh, mm] = String(value || '09:00').split(':');
   form[`${n}H`].value = hh;
   const sel = form[`${n}M`];
-  // Valor antigo fora dos múltiplos de 5 (ex.: 09:07): acrescenta-o para não o perder.
   if (![...sel.options].some((o) => o.value === mm)) sel.add(new Option(mm, mm));
   sel.value = mm;
 }
 const getTime = (form, n) => `${form[`${n}H`].value}:${form[`${n}M`].value}`;
 initTimeFields();
 
-// Alterações por salvar nos Ajustes: não as apagar quando a app recarrega os
-// dados (ex.: ao voltar de outra app). Só se repõem depois de salvar.
+// Alterações por salvar nos Ajustes não se perdem quando a app recarrega os dados.
 let settingsDirty = false;
 for (const ev of ['input', 'change']) {
   $('#settings-form').addEventListener(ev, (e) => {
-    if (e.target.id !== 'backup-import') settingsDirty = true;
+    if (!['backup-import', 'locale-select', 'stats-toggle'].includes(e.target.id)) settingsDirty = true;
   });
 }
+
+const checkboxes = (name, days, checked) =>
+  days.map((d) => `<label><input type="checkbox" name="${name}" value="${d}" ${checked.includes(d) ? 'checked' : ''}/> ${h(DOW(d))}</label>`).join('');
+const checkedValues = (name) => $$(`input[name=${name}]:checked`, $('#settings-form')).map((x) => Number(x.value));
 
 function renderSettings() {
   const s = S.settings;
   const f = $('#settings-form');
+  f.locale.innerHTML = langOptions(getLocale());
   renderOffices();
   if (LOCAL) {
     renderLocalCards();
@@ -836,19 +954,29 @@ function renderSettings() {
     renderBackupDue();
   } else renderPushStatus();
   if (settingsDirty) return;
-  f.officePct.value = s.rules.officePct;
-  f.startDate.value = s.rules.startDate || '';
-  f.maxHomeDays.value = s.rules.maxHomeDays;
-  f.enforceHomeCap.checked = Boolean(s.rules.enforceHomeCap);
+  const r = s.rules;
+  $('#rule-template').innerHTML =
+    RULE_TEMPLATES.map((tp) => `<option value="${tp.id}">${h(t(`tpl.${tp.id}`))}</option>`).join('') + `<option value="custom">${h(t('tpl.custom'))}</option>`;
+  $('#rule-template').value = matchTemplate(r);
+  f.target.value = r.target || 'percent';
+  f.officePct.value = r.officePct;
+  f.daysPerWeek.value = r.daysPerWeek;
+  f.daysPerMonth.value = r.daysPerMonth;
+  f.period.value = r.period || 'semester';
+  $('#fixed-days').innerHTML = `<legend>${h(t('rule.fixedDays'))}</legend>` + checkboxes('fixed', WEEK_ORDER.filter((d) => s.workdays.includes(d)), r.fixedDays || []);
+  $('#workdays').innerHTML = `<legend>${h(t('rule.workdays'))}</legend>` + checkboxes('workday', WEEK_ORDER, s.workdays);
+  f.startDate.value = r.startDate || '';
+  f.maxHomeDays.value = r.maxHomeDays;
+  f.enforceHomeCap.checked = Boolean(r.enforceHomeCap);
   f.maxHomeDays.disabled = !f.enforceHomeCap.checked;
+  f.companyName.value = s.companyName || '';
   f.reminderEnabled.checked = s.reminder.enabled;
   setTime(f, 'reminderTime', s.reminder.time);
   f.repeatMinutes.value = s.reminder.repeatMinutes;
   setTime(f, 'reminderUntil', s.reminder.until);
   f.weekly.checked = s.summaries.weekly;
   f.monthly.checked = s.summaries.monthly;
-  $('.weekdays').innerHTML =
-    '<legend>Dias</legend>' + [1, 2, 3, 4, 5].map((d) => `<label><input type="checkbox" name="wd" value="${d}" ${s.reminder.weekdays.includes(d) ? 'checked' : ''}/> ${DOW[d]}</label>`).join('');
+  $('#reminder-days').innerHTML = `<legend>${h(t('rem.days'))}</legend>` + checkboxes('wd', WEEK_ORDER.filter((d) => s.workdays.includes(d)), s.reminder.weekdays);
   f.locationEnabled.checked = s.location.enabled;
   setTime(f, 'windowStart', s.location.windowStart);
   setTime(f, 'windowEnd', s.location.windowEnd);
@@ -857,18 +985,75 @@ function renderSettings() {
   f.backupUrl.value = s.backup.autoUrl;
   f.backupToken.value = s.backup.autoToken;
   f.backupEmail.checked = s.backup.email;
+  updateRuleUi();
 }
 
-let regionNames = null;
-try {
-  regionNames = new Intl.DisplayNames(['pt-BR'], { type: 'region' });
-} catch {}
+/** Mostra só os campos do tipo de meta escolhido e um resumo da regra. */
+function updateRuleUi() {
+  const f = $('#settings-form');
+  $$('.rule-val', f).forEach((el) => (el.hidden = el.dataset.for !== f.target.value));
+  $('#rule-summary').textContent = `${t('sem.rule')}: ${ruleText(formRules())}`;
+}
+function formRules() {
+  const f = $('#settings-form');
+  return {
+    target: f.target.value,
+    officePct: Number(f.officePct.value),
+    daysPerWeek: Number(f.daysPerWeek.value),
+    daysPerMonth: Number(f.daysPerMonth.value),
+    period: f.period.value,
+    fixedDays: checkedValues('fixed'),
+    maxHomeDays: Number(f.maxHomeDays.value),
+    enforceHomeCap: f.enforceHomeCap.checked,
+    startDate: f.startDate.value || null,
+  };
+}
+$('#rule-template').addEventListener('change', (e) => {
+  const tp = RULE_TEMPLATES.find((x) => x.id === e.target.value);
+  if (!tp) return;
+  const f = $('#settings-form');
+  const r = tp.rules;
+  f.target.value = r.target;
+  if (r.officePct) f.officePct.value = r.officePct;
+  if (r.daysPerWeek) f.daysPerWeek.value = r.daysPerWeek;
+  if (r.daysPerMonth) f.daysPerMonth.value = r.daysPerMonth;
+  f.period.value = r.period;
+  $$('input[name=fixed]', f).forEach((x) => (x.checked = r.fixedDays.includes(Number(x.value))));
+  settingsDirty = true;
+  updateRuleUi();
+});
+$('#settings-form').addEventListener('change', (e) => {
+  if (['target', 'officePct', 'daysPerWeek', 'daysPerMonth', 'period', 'fixed'].includes(e.target.name)) {
+    $('#rule-template').value = matchTemplate(formRules());
+    updateRuleUi();
+  }
+});
+
+// Idioma: aplica-se logo (sem precisar de "Salvar").
+$('#locale-select').addEventListener('change', async (e) => {
+  useLocale(e.target.value);
+  await api('/api/settings', { method: 'PUT', body: { locale: e.target.value } });
+  await load();
+});
+
 const countryName = (c) => {
   try {
-    return regionNames?.of(c) || S.meta.countries[c] || c;
+    return new Intl.DisplayNames([intlLocale()], { type: 'region' }).of(c) || S.meta.countries[c] || c;
   } catch {
     return S.meta.countries[c] || c;
   }
+};
+function cityName(o) {
+  for (const list of Object.values(S.meta.cityPresets || {})) {
+    const p = list.find((x) => x.id === o.city);
+    if (p) return p.name;
+  }
+  return o.city;
+}
+const countryOptions = (selected) => {
+  const codes = Object.keys(S.meta.countries).sort((a, b) => countryName(a).localeCompare(countryName(b), intlLocale()));
+  const top = ['PT', 'BR'];
+  return [...top, ...codes.filter((c) => !top.includes(c))].map((c) => `<option value="${c}" ${c === selected ? 'selected' : ''}>${h(countryName(c))}</option>`).join('');
 };
 
 function renderOffices() {
@@ -876,22 +1061,22 @@ function renderOffices() {
   $('#offices').innerHTML = s.offices
     .map((o) => {
       const primary = o.id === s.primaryOfficeId;
-      return `<li><span><b>${h(o.name)}</b>${primary ? ' ⭐ principal' : ''}<br>
-        <small>${h(countryName(o.country))}${o.region ? ` · ${h(o.regionName || o.region)}` : ''}${o.city ? ` · ${h(cityName(o))}` : ''} · ${h(o.timezone)} · ${o.location ? '📍 localização definida' : 'sem localização'}</small></span>
-        <span class="actions"><button type="button" data-of-edit="${o.id}">Editar</button>${primary ? '' : `<button type="button" data-of-primary="${o.id}" title="Tornar principal">⭐</button><button type="button" data-of-del="${o.id}" title="Remover">✖</button>`}</span></li>`;
+      return `<li><span><b>${h(o.name)}</b>${primary ? ` ⭐ ${h(t('off.primary'))}` : ''}<br>
+        <small>${h(countryName(o.country))}${o.region ? ` · ${h(o.regionName || o.region)}` : ''}${o.city ? ` · ${h(cityName(o))}` : ''} · ${h(o.timezone)} · ${h(t(o.location ? 'off.hasLocation' : 'off.noLocation'))}</small></span>
+        <span class="actions"><button type="button" data-of-edit="${o.id}">${h(t('ui.edit'))}</button>${primary ? '' : `<button type="button" data-of-primary="${o.id}" title="${h(t('off.makePrimary'))}">⭐</button><button type="button" data-of-del="${o.id}" title="${h(t('ui.remove'))}">✖</button>`}</span></li>`;
     })
     .join('');
   $$('[data-of-edit]').forEach((b) => b.addEventListener('click', () => openOffice(b.dataset.ofEdit)));
   $$('[data-of-primary]').forEach((b) =>
     b.addEventListener('click', async () => {
       await api('/api/settings', { method: 'PUT', body: { primaryOfficeId: b.dataset.ofPrimary } });
-      toast('Escritório principal alterado');
+      toast(t('off.primaryChanged'));
       await load();
     }),
   );
   $$('[data-of-del]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm(`Remover o escritório "${officeName(b.dataset.ofDel)}" (e as viagens associadas)?`)) return;
+      if (!confirm(t('off.removeConfirm', { name: officeName(b.dataset.ofDel) }))) return;
       try {
         await api(`/api/offices/${b.dataset.ofDel}`, { method: 'DELETE' });
         await load();
@@ -903,35 +1088,21 @@ function renderOffices() {
 }
 
 // ---- diálogo de escritório -------------------------------------------------------
-let officeEdit = null; // rascunho em edição
-let countryMeta = null; // regiões, fusos, facultativos e modelos do país escolhido
+let officeEdit = null;
+let countryMeta = null;
 
 async function openOffice(id, preset = {}) {
   const primary = officeById(S.settings.primaryOfficeId);
   officeEdit = id
     ? structuredClone(officeById(id))
-    : {
-        name: '',
-        country: primary?.country || 'PT',
-        region: '',
-        timezone: '',
-        location: null,
-        radiusM: 200,
-        optionalHolidays: { carnaval: true, corpusChristi: true },
-        customHolidays: [],
-        city: '',
-        ...preset,
-      };
+    : { name: '', country: primary?.country || 'PT', region: '', timezone: '', location: null, radiusM: 200, optionalHolidays: { carnaval: true, corpusChristi: true }, customHolidays: [], city: '', ...preset };
   const f = $('#office-form');
-  $('#of-title').textContent = id ? `Editar: ${officeEdit.name}` : 'Novo escritório';
+  $('#of-title').textContent = id ? t('of.editTitle', { name: officeEdit.name }) : t('of.newTitle');
   f.name.value = officeEdit.name;
   f.address.value = officeEdit.location?.label || '';
   f.radiusM.value = officeEdit.radiusM;
   f.primary.checked = id === S.settings.primaryOfficeId;
-  const codes = Object.keys(S.meta.countries).sort((a, b) => countryName(a).localeCompare(countryName(b), 'pt'));
-  const top = ['PT', 'BR'];
-  f.country.innerHTML = [...top, ...codes.filter((c) => !top.includes(c))].map((c) => `<option value="${c}">${h(countryName(c))}</option>`).join('');
-  f.country.value = officeEdit.country;
+  f.country.innerHTML = countryOptions(officeEdit.country);
   await loadCountryMeta(officeEdit.country);
   $('#office-dialog').showModal();
 }
@@ -940,7 +1111,7 @@ async function loadCountryMeta(country) {
   countryMeta = await api(`/api/countries/${country}`);
   const f = $('#office-form');
   const regions = Object.entries(countryMeta.regions);
-  f.region.innerHTML = `<option value="">${regions.length ? '— todo o país —' : '— (não se aplica) —'}</option>` + regions.map(([k, v]) => `<option value="${k}">${h(v)}</option>`).join('');
+  f.region.innerHTML = `<option value="">${h(t(regions.length ? 'of.wholeCountry' : 'of.notApplicable'))}</option>` + regions.map(([k, v]) => `<option value="${k}">${h(v)}</option>`).join('');
   f.region.value = officeEdit.region || '';
   f.region.disabled = regions.length === 0;
   const tzs = [...new Set([...(countryMeta.timezones || []), officeEdit.timezone].filter(Boolean))];
@@ -948,35 +1119,23 @@ async function loadCountryMeta(country) {
   f.timezone.innerHTML = (tzs.length ? tzs : ['UTC']).map((z) => `<option>${h(z)}</option>`).join('');
   f.timezone.value = officeEdit.timezone;
   $('#of-optional').innerHTML =
-    '<legend>Pontos facultativos concedidos</legend>' +
+    `<legend>${h(t('of.optional'))}</legend>` +
     countryMeta.optional.map((o) => `<label><input type="checkbox" data-opt="${o.key}" ${officeEdit.optionalHolidays?.[o.key] ? 'checked' : ''}/> ${h(o.name)}</label>`).join('');
-  // Escritórios antigos não tinham "city": deduz-se dos feriados já guardados.
   if (!officeEdit.city) officeEdit.city = countryMeta.presets.find((p) => presetIn(p, officeEdit.customHolidays))?.id || '';
-  const hasCities = countryMeta.presets.length > 0;
-  $('#of-city-wrap').hidden = !hasCities;
-  $('#of-city').innerHTML =
-    '<option value="">— Nenhuma / outra cidade —</option>' + countryMeta.presets.map((p) => `<option value="${p.id}">${h(p.name)}</option>`).join('');
+  $('#of-city-wrap').hidden = countryMeta.presets.length === 0;
+  $('#of-city').innerHTML = `<option value="">${h(t('of.noCity'))}</option>` + countryMeta.presets.map((p) => `<option value="${p.id}">${h(p.name)}</option>`).join('');
   $('#of-city').value = officeEdit.city || '';
   renderOfficeLoc();
   renderOfficeCustom();
 }
 
-// ---- cidade (feriado municipal) e lista completa de feriados ---------------------
 const sameHoliday = (a, b) => a.date === b.date && a.name === b.name;
 const presetIn = (p, list) => p.holidays.every((hd) => list.some((c) => sameHoliday(c, hd)));
 const cityPreset = () => countryMeta?.presets.find((p) => p.id === officeEdit.city) || null;
-function cityName(o) {
-  for (const list of Object.values(S.meta.cityPresets || {})) {
-    const p = list.find((x) => x.id === o.city);
-    if (p) return p.name;
-  }
-  return o.city;
-}
-const fmtHol = (d) => (d.length === 5 ? `${d.slice(3)}/${d.slice(0, 2)}` : `${d.slice(8)}/${d.slice(5, 7)}/${d.slice(0, 4)}`);
+const fmtHol = (d) => (d.length === 5 ? fmtDM(`2026-${d}`) : fmtFull(d));
 
 $('#of-city').addEventListener('change', (e) => {
   const prev = cityPreset();
-  // Troca de cidade: saem os feriados da cidade anterior, entram os da nova.
   if (prev) officeEdit.customHolidays = officeEdit.customHolidays.filter((c) => !prev.holidays.some((hd) => sameHoliday(c, hd)));
   officeEdit.city = e.target.value;
   const p = cityPreset();
@@ -1000,38 +1159,35 @@ async function refreshHolidayPreview() {
         year: S.semester.year,
       },
     });
-    const workdays = holidays.filter((x) => !x.weekend).length;
-    box.querySelector('summary').textContent = `📅 Ver todos os feriados de ${year} deste escritório (${holidays.length}; ${workdays} em dias úteis)`;
-    const TYPE = { nacional: 'nacional', facultativo: 'facultativo', municipal: 'municipal', estadual: 'regional', empresa: 'empresa' };
+    const work = holidays.filter((x) => !x.weekend).length;
+    box.querySelector('summary').textContent = `📅 ${t('of.allHolidays', { year, n: holidays.length, work })}`;
     box.querySelector('ul').innerHTML = holidays
       .map((x) => {
-        const wd = DOW[new Date(x.date + 'T12:00:00Z').getUTCDay()];
-        return `<li class="${x.weekend ? 'weekend' : ''}"><span>${wd} ${fmtDM(x.date)} — ${h(x.name)}${x.weekend ? ' <small>(fim de semana)</small>' : ''}</span> <span class="tag">${TYPE[x.type] || x.type}</span></li>`;
+        const wd = DOW(new Date(x.date + 'T12:00:00Z').getUTCDay());
+        return `<li class="${x.weekend ? 'weekend' : ''}"><span>${h(wd)} ${fmtDM(x.date)} — ${h(x.name)}${x.weekend ? ` <small>(${h(t('of.weekend'))})</small>` : ''}</span> <span class="tag">${h(t(`scope.${x.type}`))}</span></li>`;
       })
       .join('');
   } catch (err) {
-    box.querySelector('summary').textContent = `Não foi possível calcular os feriados: ${err.message}`;
+    box.querySelector('summary').textContent = err.message;
   }
 }
 $('#of-optional').addEventListener('change', refreshHolidayPreview);
 
 function renderOfficeLoc() {
   const l = officeEdit.location;
-  $('#of-loc').textContent = l ? `📍 ${l.label || ''} (${l.lat.toFixed(5)}, ${l.lng.toFixed(5)})` : 'Sem localização (necessária só para o check-in por localização).';
+  $('#of-loc').textContent = l ? `📍 ${l.label || ''} (${l.lat.toFixed(5)}, ${l.lng.toFixed(5)})` : t('of.noLocation');
 }
 
 function renderOfficeCustom() {
   const p = cityPreset();
   $('#of-city-hint').textContent = p
-    ? `Feriado(s) municipal(is) de ${p.name}: ${p.holidays.map((hd) => `${fmtHol(hd.date)} ${hd.name}`).join(', ')}.`
-    : countryMeta?.presets.length
-      ? 'Sem cidade escolhida: se a sua não estiver na lista, adicione o feriado municipal em "Outros feriados locais".'
-      : 'Não há lista de cidades para este país: adicione o feriado municipal em "Outros feriados locais".';
-  const fmt = (d) => (d.length === 5 ? `${fmtHol(d)} (todo ano)` : fmtHol(d));
+    ? t('of.cityHolidays', { city: p.name, list: p.holidays.map((hd) => `${fmtHol(hd.date)} ${hd.name}`).join(', ') })
+    : t(countryMeta?.presets.length ? 'of.cityNone' : 'of.cityNoList');
   const items = officeEdit.customHolidays.map((c, i) => ({ c, i })).filter(({ c }) => !p?.holidays.some((hd) => sameHoliday(c, hd)));
   $('#of-custom').innerHTML =
-    items.map(({ c, i }) => `<li><span>${fmt(c.date)} — ${h(c.name)} <small>${c.scope}</small></span><button type="button" data-rm="${i}">✖</button></li>`).join('') ||
-    '<li class="hint">Nenhum.</li>';
+    items
+      .map(({ c, i }) => `<li><span>${fmtHol(c.date)}${c.date.length === 5 ? ` (${h(t('of.everyYear'))})` : ''} — ${h(c.name)} <small>${h(t(`scope.${c.scope || 'municipal'}`))}</small></span><button type="button" data-rm="${i}">✖</button></li>`)
+      .join('') || `<li class="hint">${h(t('ui.none'))}</li>`;
   $$('#of-custom [data-rm]').forEach((b) =>
     b.addEventListener('click', () => {
       officeEdit.customHolidays.splice(Number(b.dataset.rm), 1);
@@ -1045,9 +1201,8 @@ $('#office-form').country.addEventListener('change', async (e) => {
   officeEdit.country = e.target.value;
   officeEdit.region = '';
   officeEdit.timezone = '';
-  // Feriados locais pertencem a uma cidade de um país: ao trocar de país, saem.
   if (officeEdit.customHolidays.length) {
-    toast(`${officeEdit.customHolidays.length} feriado(s) local(is) do país anterior removido(s).`);
+    toast(t('of.removedLocal', { n: officeEdit.customHolidays.length }));
     officeEdit.customHolidays = [];
   }
   officeEdit.city = '';
@@ -1064,8 +1219,8 @@ $('#office-form').timezone.addEventListener('change', (e) => (officeEdit.timezon
 $('#of-ch-add').addEventListener('click', () => {
   const raw = $('#of-ch-date').value.trim();
   const name = $('#of-ch-name').value.trim();
-  const m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?$/.exec(raw);
-  if (!m || !name) return toast('Use DD/MM ou DD/MM/AAAA e um nome.');
+  const m = /^(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{4}))?$/.exec(raw);
+  if (!m || !name) return toast(t('of.dateFormat'));
   const dd = m[1].padStart(2, '0');
   const mm = m[2].padStart(2, '0');
   officeEdit.customHolidays.push({ date: m[3] ? `${m[3]}-${mm}-${dd}` : `${mm}-${dd}`, name, scope: $('#of-ch-scope').value });
@@ -1077,23 +1232,23 @@ $('#of-geocode').addEventListener('click', async () => {
   const q = $('#office-form').address.value.trim();
   if (!q) return;
   try {
-    // Geocodificação gratuita via OpenStreetMap (Nominatim), feita no navegador.
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+    // Procura de endereços gratuita via OpenStreetMap (Nominatim), feita no navegador.
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=${getLocale()}&q=${encodeURIComponent(q)}`);
     const [hit] = await res.json();
-    if (!hit) return toast('Endereço não encontrado. Tente ser mais específico ou use a posição atual.');
+    if (!hit) return toast(t('of.notFound'));
     officeEdit.location = { lat: Number(hit.lat), lng: Number(hit.lon), label: q };
     renderOfficeLoc();
   } catch {
-    toast('Falha ao procurar endereço.');
+    toast(t('of.searchFailed'));
   }
 });
 
 $('#of-here').addEventListener('click', async () => {
   try {
-    toast('Obtendo a posição…');
-    const p = await getPosition((t) => toast(t));
-    officeEdit.location = { lat: p.lat, lng: p.lng, label: $('#office-form').address.value.trim() || 'Posição registrada' };
-    if (p.accuracy > 100) toast(`Posição gravada, mas com pouca precisão (±${Math.round(p.accuracy)} m). Se puder, repita perto de uma janela.`);
+    toast(t('of.gettingPosition'));
+    const p = await getPosition((x) => toast(x));
+    officeEdit.location = { lat: p.lat, lng: p.lng, label: $('#office-form').address.value.trim() || t('of.positionLabel') };
+    if (p.accuracy > 100) toast(t('of.lowAccuracy', { acc: Math.round(p.accuracy) }));
     renderOfficeLoc();
   } catch (e) {
     toast(e.message);
@@ -1102,7 +1257,7 @@ $('#of-here').addEventListener('click', async () => {
 
 $('#of-save').addEventListener('click', async () => {
   const f = $('#office-form');
-  if (!f.name.value.trim()) return toast('Dê um nome ao escritório.');
+  if (!f.name.value.trim()) return toast(t('err.officeName'));
   const body = {
     ...officeEdit,
     name: f.name.value.trim(),
@@ -1113,7 +1268,7 @@ $('#of-save').addEventListener('click', async () => {
   try {
     await api('/api/offices', { method: 'POST', body });
     $('#office-dialog').close();
-    toast('Escritório salvo');
+    toast(t('of.saved'));
     await load();
   } catch (err) {
     toast(err.message);
@@ -1122,54 +1277,333 @@ $('#of-save').addEventListener('click', async () => {
 
 $('#office-add').addEventListener('click', () => openOffice(null));
 $('#start-clear').addEventListener('click', () => {
-  const f = $('#settings-form');
-  f.startDate.value = '';
+  $('#settings-form').startDate.value = '';
   settingsDirty = true;
-  toast('Sem data de início: conta o semestre inteiro. Salve para aplicar.');
+  toast(t('rule.noDateToast'));
 });
 $('#settings-form').enforceHomeCap.addEventListener('change', (e) => (e.target.form.maxHomeDays.disabled = !e.target.checked));
 
 $('#settings-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
+  const wdays = checkedValues('workday');
+  if (!wdays.length) return toast(t('err.workdays'));
   const patch = {
-    rules: {
-      officePct: Number(f.officePct.value),
-      maxHomeDays: Number(f.maxHomeDays.value),
-      enforceHomeCap: f.enforceHomeCap.checked,
-      startDate: f.startDate.value || null,
-    },
+    rules: formRules(),
+    workdays: wdays,
+    companyName: f.companyName.value.trim(),
     reminder: {
       enabled: f.reminderEnabled.checked,
       time: getTime(f, 'reminderTime'),
       repeatMinutes: Number(f.repeatMinutes.value),
       until: getTime(f, 'reminderUntil'),
-      weekdays: $$('input[name=wd]:checked', f).map((x) => Number(x.value)),
+      weekdays: checkedValues('wd'),
     },
     summaries: { weekly: f.weekly.checked, monthly: f.monthly.checked },
     location: { enabled: f.locationEnabled.checked, windowStart: getTime(f, 'windowStart'), windowEnd: getTime(f, 'windowEnd') },
     askOnTimezoneChange: f.askOnTimezoneChange.checked,
-    backup: {
-      frequency: f.backupFrequency.value,
-      autoUrl: f.backupUrl.value.trim(),
-      autoToken: f.backupToken.value.trim(),
-      email: f.backupEmail.checked,
-    },
+    backup: { frequency: f.backupFrequency.value, autoUrl: f.backupUrl.value.trim(), autoToken: f.backupToken.value.trim(), email: f.backupEmail.checked },
   };
-  if (patch.location.enabled && !S.settings.offices.some((o) => o.location)) return toast('Defina a localização de pelo menos um escritório primeiro.');
-  if (patch.reminder.until <= patch.reminder.time) return toast('"Parar às" tem de ser depois do primeiro lembrete.');
-  if (patch.location.windowEnd <= patch.location.windowStart) return toast('O fim da janela de localização tem de ser depois do início.');
+  // Dias fixos e de lembrete só podem ser dias de trabalho.
+  patch.rules.fixedDays = patch.rules.fixedDays.filter((d) => wdays.includes(d));
+  if (patch.location.enabled && !S.settings.offices.some((o) => o.location)) return toast(t('loc.needOffice'));
+  if (patch.reminder.until <= patch.reminder.time) return toast(t('rem.untilAfter'));
+  if (patch.location.windowEnd <= patch.location.windowStart) return toast(t('loc.windowOrder'));
   try {
     await api('/api/settings', { method: 'PUT', body: patch });
     settingsDirty = false;
-    toast('Configurações salvas');
+    // Se mudou o tipo de período, volta ao período de hoje.
+    if (patch.rules.period !== S.settings.rules.period) periodId = null;
+    toast(t('set.saved'));
     await load();
   } catch (err) {
     toast(err.message);
   }
 });
 
-// ---------------------------------------------------------------- push
+// ---------------------------------------------------------------- partilhar configuração
+// A configuração da empresa (regra, país, cidade, feriados) vai num link. Nada de
+// dados pessoais: sem dias, sem localização, sem data de admissão, sem cópias.
+const b64url = {
+  enc: (obj) => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  dec: (s) => JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)))),
+};
+
+// O nome padrão ("Escritório principal", "Main office"…) não vai no link: quem recebe usa o seu.
+const isDefaultName = (name) => Object.values(DICTIONARIES).some((d) => d['office.defaultName'] === name);
+
+function buildConfigLink() {
+  const s = S.settings;
+  const o = officeById(s.primaryOfficeId);
+  const { target, officePct, daysPerWeek, daysPerMonth, period, fixedDays, maxHomeDays, enforceHomeCap } = s.rules;
+  const cfg = {
+    v: 1,
+    company: s.companyName || '',
+    rules: { target, officePct, daysPerWeek, daysPerMonth, period, fixedDays, maxHomeDays, enforceHomeCap },
+    workdays: s.workdays,
+    office: { name: isDefaultName(o.name) ? '' : o.name, country: o.country, region: o.region, regionName: o.regionName, city: o.city, timezone: o.timezone, optionalHolidays: o.optionalHolidays, customHolidays: o.customHolidays },
+  };
+  return `${location.origin}${location.pathname}#cfg=${b64url.enc(cfg)}`;
+}
+
+$('#share-config').addEventListener('click', async () => {
+  if (settingsDirty) return toast(t('share.saveFirst'));
+  const url = buildConfigLink();
+  const title = t('share.shareTitle', { company: S.settings.companyName || t('share.ourCompany') });
+  try {
+    if (navigator.share) {
+      await navigator.share({ title, text: title, url });
+      return;
+    }
+  } catch (e) {
+    if (e?.name === 'AbortError') return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast(t('share.copied'));
+  } catch {
+    prompt(t('share.copyManually'), url);
+  }
+});
+
+let pendingConfig = null;
+function readConfigFromHash() {
+  const m = /^#cfg=([\w-]+)$/.exec(location.hash);
+  if (!m) return null;
+  try {
+    const c = b64url.dec(m[1]);
+    if (c?.v !== 1 || typeof c.rules !== 'object' || typeof c.office?.country !== 'string') return null;
+    return c;
+  } catch {
+    return null;
+  }
+}
+function checkConfigLink() {
+  const c = readConfigFromHash();
+  history.replaceState(null, '', location.pathname + location.search + '#painel');
+  if (!c) {
+    if (S) toast(t('share.invalid'));
+    return;
+  }
+  pendingConfig = c;
+  const r = { ...S.settings.rules, ...c.rules };
+  $('#cfg-text').innerHTML = t('share.applyText', {
+    company: `<b>${h(c.company || t('share.ourCompany'))}</b>`,
+    rule: `<b>${h(ruleText(r))}</b>`,
+    office: `${c.office.name ? `<b>${h(c.office.name)}</b> ` : ''}(${h(countryName(c.office.country))})`,
+  });
+  $('#cfg-dialog').showModal();
+}
+$('#cfg-apply').addEventListener('click', async () => {
+  const c = pendingConfig;
+  if (!c) return;
+  try {
+    const primary = officeById(S.settings.primaryOfficeId);
+    const o = c.office;
+    // Mantém a localização e o raio pessoais do escritório principal.
+    await api('/api/offices', {
+      method: 'POST',
+      body: { id: primary.id, primary: true, name: o.name || primary.name, country: o.country, region: o.region || '', regionName: o.regionName || '', city: o.city || '', timezone: o.timezone || '', optionalHolidays: o.optionalHolidays || {}, customHolidays: Array.isArray(o.customHolidays) ? o.customHolidays : [] },
+    });
+    const rules = Object.fromEntries(Object.entries(c.rules).filter(([k]) => ['target', 'officePct', 'daysPerWeek', 'daysPerMonth', 'period', 'fixedDays', 'maxHomeDays', 'enforceHomeCap'].includes(k)));
+    await api('/api/settings', { method: 'PUT', body: { rules, workdays: Array.isArray(c.workdays) && c.workdays.length ? c.workdays : S.settings.workdays, companyName: String(c.company || '').slice(0, 60), onboarded: true } });
+    $('#cfg-dialog').close();
+    $('#wizard').open && $('#wizard').close();
+    periodId = null;
+    settingsDirty = false;
+    toast(t('share.applied'));
+    await load();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+// ---------------------------------------------------------------- assistente inicial
+let wizStep = 1;
+let wizMeta = null;
+async function openWizard() {
+  const f = $('#wizard-form');
+  const o = officeById(S.settings.primaryOfficeId);
+  f.locale.innerHTML = langOptions(getLocale());
+  f.country.innerHTML = countryOptions(o.country);
+  f.startDate.value = S.settings.rules.startDate || '';
+  const current = matchTemplate(S.settings.rules);
+  $('#wiz-templates').innerHTML = [...RULE_TEMPLATES.map((tp) => tp.id), current === 'custom' ? 'custom' : null]
+    .filter(Boolean)
+    .map((id) => `<label><input type="radio" name="tpl" value="${id}" ${id === (current === 'custom' ? 'custom' : current) ? 'checked' : ''}/> ${h(t(`tpl.${id}`))}</label>`)
+    .join('');
+  await wizCountry(o.country, o.city, o.region);
+  $('#wiz-stats').hidden = !shouldAsk(STATS_URL, S.settings.stats);
+  $$('#wiz-stats input').forEach((x) => (x.checked = false));
+  wizGo(1);
+  $('#wizard').showModal();
+}
+async function wizCountry(country, city = '', region = '') {
+  const f = $('#wizard-form');
+  wizMeta = await api(`/api/countries/${country}`);
+  $('#wiz-city-wrap').hidden = !wizMeta.presets.length;
+  f.city.innerHTML = `<option value="">${h(t('of.noCity'))}</option>` + wizMeta.presets.map((p) => `<option value="${p.id}">${h(p.name)}</option>`).join('');
+  f.city.value = city || '';
+  const regions = Object.entries(wizMeta.regions);
+  $('#wiz-region-wrap').hidden = !regions.length;
+  f.region.innerHTML = `<option value="">${h(t('of.wholeCountry'))}</option>` + regions.map(([k, v]) => `<option value="${k}">${h(v)}</option>`).join('');
+  f.region.value = region || '';
+}
+function wizGo(n) {
+  wizStep = n;
+  $$('.wiz-step').forEach((el) => (el.hidden = Number(el.dataset.step) !== n));
+  $('#wiz-back').hidden = n === 1;
+  $('#wiz-skip').hidden = n === 3;
+  $('#wiz-next').textContent = t(n === 3 ? 'wiz.finish' : 'wiz.next');
+}
+$('#wizard-form').locale.addEventListener('change', async (e) => {
+  useLocale(e.target.value);
+  await api('/api/settings', { method: 'PUT', body: { locale: e.target.value } });
+  await load();
+  const f = $('#wizard-form');
+  const keep = { country: f.country.value, city: f.city.value, region: f.region.value, tpl: f.tpl?.value };
+  f.country.innerHTML = countryOptions(keep.country);
+  await wizCountry(keep.country, keep.city, keep.region);
+  $$('#wiz-templates label').forEach((l) => {
+    const id = l.querySelector('input').value;
+    l.lastChild.textContent = ` ${t(`tpl.${id}`)}`;
+  });
+  wizGo(wizStep);
+});
+$('#wizard-form').country.addEventListener('change', (e) => wizCountry(e.target.value));
+$('#wiz-back').addEventListener('click', () => wizGo(wizStep - 1));
+$('#wiz-skip').addEventListener('click', async () => {
+  $('#wizard').close();
+  await api('/api/settings', { method: 'PUT', body: { onboarded: true } });
+  await load();
+});
+$('#wiz-next').addEventListener('click', async () => {
+  const f = $('#wizard-form');
+  if (wizStep === 2) {
+    const tpl = f.tpl?.value;
+    const r = RULE_TEMPLATES.find((x) => x.id === tpl)?.rules || S.settings.rules;
+    $('#wiz-summary').innerHTML = t('wiz.summary', {
+      rule: `<b>${h(ruleText({ ...S.settings.rules, ...r }))}</b>`,
+      place: `<b>${h([wizMeta.presets.find((p) => p.id === f.city.value)?.name, countryName(f.country.value)].filter(Boolean).join(', '))}</b>`,
+    });
+  }
+  if (wizStep < 3) return wizGo(wizStep + 1);
+  // Concluir: escritório principal (país/cidade/região) + regra + data de início.
+  try {
+    const primary = officeById(S.settings.primaryOfficeId);
+    const city = wizMeta.presets.find((p) => p.id === f.city.value);
+    const changedCountry = f.country.value !== primary.country;
+    const custom = changedCountry ? [] : primary.customHolidays.filter((c) => !Object.values(S.meta.cityPresets).flat().some((p) => p.holidays.some((hd) => hd.date === c.date && hd.name === c.name)));
+    await api('/api/offices', {
+      method: 'POST',
+      body: {
+        id: primary.id,
+        primary: true,
+        name: city?.name || (changedCountry || !primary.name ? countryName(f.country.value) : primary.name),
+        country: f.country.value,
+        region: f.region.value,
+        regionName: wizMeta.regions[f.region.value] || '',
+        city: city?.id || '',
+        timezone: changedCountry ? '' : primary.timezone,
+        customHolidays: [...custom, ...(city ? city.holidays : [])],
+        optionalHolidays: changedCountry ? { carnaval: true, corpusChristi: true } : primary.optionalHolidays,
+      },
+    });
+    const tp = RULE_TEMPLATES.find((x) => x.id === f.tpl?.value);
+    await api('/api/settings', { method: 'PUT', body: { rules: { ...(tp ? tp.rules : {}), startDate: f.startDate.value || null }, onboarded: true } });
+    $('#wizard').close();
+    periodId = null;
+    settingsDirty = false;
+    const statsChoice = $('#wiz-stats').hidden ? '' : f.stats.value;
+    if (statsChoice) await setStatsConsent(statsChoice === 'yes', { quiet: true });
+    toast(t('wiz.saved'));
+    await load();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+$('#wizard-open').addEventListener('click', () => openWizard());
+
+// ---------------------------------------------------------------- estatísticas anónimas
+// Só com consentimento explícito (nada pré-marcado). No máximo um envio por dia para a
+// planilha Google do dono da app; desligar pede o apagamento do que já foi enviado.
+// Ver src/core/stats.js e integrations/google-stats.md.
+function renderStats() {
+  const st = S.settings.stats;
+  $('#stats-ask').hidden = !(shouldAsk(STATS_URL, st) && S.settings.onboarded);
+  $('#stats-settings').hidden = !STATS_URL;
+  $('#stats-toggle').checked = st.consent === true;
+  $('#stats-info').textContent = st.consent === true && st.id ? t('stats.code', { code: st.id.slice(0, 8) }) : '';
+}
+
+async function postStats(payload) {
+  try {
+    const res = await fetch(STATS_URL, { method: 'POST', body: JSON.stringify(payload), keepalive: true });
+    return (await res.json()).ok === true;
+  } catch {
+    return false;
+  }
+}
+
+async function saveStats(patch) {
+  const r = await api('/api/settings', { method: 'PUT', body: { stats: patch } });
+  S.settings = r.settings;
+}
+
+async function setStatsConsent(yes, { quiet = false } = {}) {
+  const st = S.settings.stats;
+  if (yes) {
+    await saveStats({ consent: true, id: st.id || newDeviceId(), firstSeen: st.firstSeen || S.now.date, lastPing: null });
+    if (!quiet) toast(t('stats.thanks'));
+  } else {
+    // Desligar: o código deixa de existir aqui e pede-se o apagamento do que foi enviado.
+    await saveStats({ consent: false, id: null, firstSeen: null, lastPing: null, forgetPending: st.id || st.forgetPending || null });
+    if (!quiet) toast(t('stats.off'));
+  }
+  renderStats();
+  await statsTick();
+}
+
+let statsBusy = false;
+async function statsTick() {
+  if (!STATS_URL || !S || statsBusy) return;
+  statsBusy = true;
+  try {
+    const st = S.settings.stats;
+    if (st.forgetPending && (await postStats(buildForget(st.forgetPending)))) await saveStats({ forgetPending: null });
+    if (shouldPing(STATS_URL, S.settings.stats, S.now.date)) {
+      const payload = buildPing({
+        settings: { ...S.settings, locale: getLocale() }, // idioma em uso (mesmo que nunca escolhido)
+        today: S.now.date,
+        version: APP_VERSION,
+        ruleId: matchTemplate(S.settings.rules),
+        platform: platformOf(navigator.userAgent),
+        installed: matchMedia('(display-mode: standalone)').matches || navigator.standalone === true,
+      });
+      if (await postStats(payload)) await saveStats({ lastPing: S.now.date });
+    }
+  } finally {
+    statsBusy = false;
+  }
+}
+
+$$('#stats-ask [data-stats]').forEach((b) => b.addEventListener('click', () => setStatsConsent(b.dataset.stats === 'yes')));
+$('#stats-toggle').addEventListener('change', (e) => setStatsConsent(e.target.checked));
+
+// ---------------------------------------------------------------- sobre
+function openAbout() {
+  $('#about-version').textContent = t('about.version', { v: APP_VERSION });
+  $('#about-stats').hidden = !STATS_URL;
+  $('#about-news').innerHTML = NEWS.map((k) => `<li>${h(t(k))}</li>`).join('');
+  $('#about-dialog').showModal();
+}
+$('#about-open').addEventListener('click', openAbout);
+$('#footer-about').addEventListener('click', (e) => {
+  e.preventDefault();
+  openAbout();
+});
+
+// ---------------------------------------------------------------- push (modo servidor)
 function urlBase64ToUint8Array(b64) {
   const pad = '='.repeat((4 - (b64.length % 4)) % 4);
   const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
@@ -1179,16 +1613,14 @@ function urlBase64ToUint8Array(b64) {
 async function renderPushStatus() {
   const el = $('#push-status');
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    el.textContent = 'Este navegador não suporta notificações push. No iPhone, instale a app na Tela de Início (Compartilhar → Adicionar à Tela de Início) e abra-a por lá.';
+    el.textContent = t('push.unsupported');
     $('#push-enable').disabled = true;
     return;
   }
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.getSubscription();
-  el.textContent = sub
-    ? `✅ Notificações ativas neste dispositivo (${S.meta.subscriptions} dispositivo(s) no total).`
-    : `Notificações desativadas neste dispositivo. Permissão do navegador: ${Notification.permission}.`;
-  $('#push-enable').textContent = sub ? 'Desativar neste dispositivo' : 'Ativar notificações neste dispositivo';
+  el.textContent = sub ? t('push.on', { n: S.meta.subscriptions }) : t('push.off', { perm: Notification.permission });
+  $('#push-enable').textContent = t(sub ? 'push.disable' : 'push.enable');
   $('#push-enable').dataset.on = sub ? '1' : '';
 }
 
@@ -1202,17 +1634,17 @@ $('#push-enable').addEventListener('click', async () => {
     }
   } else {
     const perm = await Notification.requestPermission();
-    if (perm !== 'granted') return toast('Permissão de notificação negada.');
+    if (perm !== 'granted') return toast(t('push.denied'));
     const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(S.meta.vapidPublicKey) });
     await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() });
-    toast('Notificações ativadas!');
+    toast(t('push.enabled'));
   }
   await load();
 });
 
 $('#push-test').addEventListener('click', async () => {
   const r = await api('/api/push/test', { method: 'POST' });
-  toast(r.total ? `Enviado para ${r.delivered}/${r.total} dispositivo(s)` : 'Nenhum dispositivo inscrito ainda.');
+  toast(r.total ? t('push.sent', { ok: r.delivered, total: r.total }) : t('push.noDevices'));
 });
 
 $('#logout').addEventListener('click', async () => {
@@ -1220,13 +1652,11 @@ $('#logout').addEventListener('click', async () => {
   location.reload();
 });
 
-// O service worker avisa quando você responde pelos botões da notificação.
 navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.type === 'checked-in') load();
 });
 
 // ---------------------------------------------------------------- modo local
-// Sem servidor: lembretes pelo calendário do celular + cópia de segurança.
 function download(filename, text, type) {
   const blob = new Blob([text], { type });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: filename });
@@ -1236,7 +1666,6 @@ function download(filename, text, type) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }
 
-/** Partilha um arquivo (folha de partilha do celular) ou, se não der, descarrega-o. */
 async function shareOrDownload(filename, text, type) {
   try {
     const file = new File([text], filename, { type });
@@ -1245,7 +1674,7 @@ async function shareOrDownload(filename, text, type) {
       return;
     }
   } catch (e) {
-    if (e?.name === 'AbortError') return; // utilizador cancelou
+    if (e?.name === 'AbortError') return;
   }
   download(filename, text, type);
 }
@@ -1254,14 +1683,14 @@ function renderLocalCards() {
   $$('.server-only').forEach((el) => (el.hidden = true));
   $$('.local-only').forEach((el) => (el.hidden = false));
   const r = S.settings.reminder;
-  $('#cal-info').textContent = `Lembretes às ${r.time}${r.repeatMinutes ? `, repetidos a cada ${r.repeatMinutes} min (até 3 alertas)` : ''}, nos dias úteis de hoje até ao fim do semestre — sem feriados, férias e dias já registrados.`;
+  $('#cal-info').textContent = t('rem.calInfo', { time: r.time, repeat: r.repeatMinutes });
 }
 
 $('#cal-ics').addEventListener('click', async () => {
   const { ics, count, until } = (await localBackend).reminderIcs();
-  if (!count) return toast('Não há dias úteis por registrar até ao fim do semestre.');
-  await shareOrDownload(`presenca-lembretes-ate-${until}.ics`, ics, 'text/calendar');
-  toast(`${count} lembretes gerados. Abra o arquivo para adicioná-los ao calendário.`);
+  if (!count) return toast(t('rem.noDays'));
+  await shareOrDownload(`presenca-lembretes-${until}.ics`, ics, 'text/calendar');
+  toast(t('rem.generated', { n: count }));
 });
 $('#cal-google').addEventListener('click', async () => {
   window.open((await localBackend).googleLink(), '_blank', 'noopener');
@@ -1270,10 +1699,10 @@ $('#backup-import').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
-  if (!confirm('Importar esta cópia SUBSTITUI todos os dados atuais deste aparelho. Continuar?')) return;
+  if (!confirm(t('bk.importConfirm'))) return;
   try {
     const n = (await localBackend).importBackup(await file.text());
-    toast(`Cópia restaurada: ${n} dia(s).`);
+    toast(t('bk.restored', { n }));
     await load();
   } catch (err) {
     toast(err.message);
@@ -1281,37 +1710,27 @@ $('#backup-import').addEventListener('change', async (e) => {
 });
 
 // ---- cópias de segurança periódicas -------------------------------------------
-const fmtFullDate = (iso) => `${fmtDM(iso)}/${iso.slice(0, 4)}`;
-let autoBackupFailed = null; // mensagem do último envio automático falhado (nesta sessão)
+let autoBackupFailed = null;
 
-/** Partilha a cópia (.json + .csv) pela folha de partilha; se não der, descarrega. */
 async function shareBackup() {
   const b = (await localBackend).backupBundle();
-  const files = [
-    new File([b.json], `${b.filename}.json`, { type: 'application/json' }),
-    new File([b.csv], `${b.filename}.csv`, { type: 'text/csv' }),
-  ];
+  const files = [new File([b.json], `${b.filename}.json`, { type: 'application/json' }), new File([b.csv], `${b.filename}.csv`, { type: 'text/csv' })];
   try {
     if (navigator.canShare?.({ files })) {
-      await navigator.share({ files, title: 'Presença — cópia de segurança', text: b.summary });
+      await navigator.share({ files, title: t('bk.shareTitle'), text: b.summary });
       await markBackupDone();
-      toast('💾 Cópia partilhada.');
+      toast(t('bk.shared'));
       return;
     }
   } catch (e) {
-    if (e?.name === 'AbortError') return; // cancelou: a cópia continua pendente
+    if (e?.name === 'AbortError') return;
   }
   download(`${b.filename}.json`, b.json, 'application/json');
   download(`${b.filename}.csv`, b.csv, 'text/csv');
   await markBackupDone();
-  toast('💾 Cópia descarregada (.json e .csv). Guarde-a no Drive ou envie-a por e-mail.');
+  toast(t('bk.downloaded'));
 }
 
-/**
- * Envia a cópia para o Google Apps Script do usuário (Drive + e-mail).
- * Pedido "simples" (texto, sem cabeçalhos extra) para o navegador o aceitar
- * sem pedido prévio de permissão (CORS).
- */
 async function sendAutoBackup({ url, token, email, silent = false }) {
   const b = (await localBackend).backupBundle();
   let res;
@@ -1319,15 +1738,15 @@ async function sendAutoBackup({ url, token, email, silent = false }) {
     const r = await fetch(url, { method: 'POST', body: JSON.stringify({ token, email, filename: b.filename, json: b.json, csv: b.csv, summary: b.summary }) });
     res = await r.json();
   } catch {
-    res = { ok: false, error: 'Não foi possível contactar o script (sem internet, ou endereço/implantação errados).' };
+    res = { ok: false, error: t('bk.unreachable') };
   }
   if (res.ok) {
     autoBackupFailed = null;
     await markBackupDone();
-    toast(`☁️ Cópia guardada no Google Drive${res.emailed ? ' e enviada por e-mail' : ''}.`);
+    toast(t(res.emailed ? 'bk.autoOkEmail' : 'bk.autoOk'));
   } else {
-    autoBackupFailed = res.error || 'Erro desconhecido.';
-    if (!silent) toast(`Cópia automática falhou: ${autoBackupFailed}`);
+    autoBackupFailed = res.error || t('ui.error');
+    if (!silent) toast(t('bk.autoFailed', { error: autoBackupFailed }));
     renderBackupDue();
   }
   return res;
@@ -1336,35 +1755,30 @@ async function sendAutoBackup({ url, token, email, silent = false }) {
 async function markBackupDone() {
   await api('/api/settings', { method: 'PUT', body: { backup: { lastAt: S.now.date } } });
   try {
-    localStorage.removeItem('presenca:lastBackup'); // formato antigo
+    localStorage.removeItem('presenca:lastBackup');
   } catch {}
   await load();
 }
 
 function renderBackupInfo() {
   const bk = S.settings.backup;
-  const auto = bk.autoUrl ? ' Cópia automática para o Google: ligada.' : '';
-  $('#backup-info').textContent = bk.lastAt
-    ? `Última cópia: ${fmtFullDate(bk.lastAt)}.${isBackupDue(bk, S.now.date) ? ' ⚠️ Está na hora de uma nova.' : ''}${auto}`
-    : `Ainda não fez nenhuma cópia de segurança.${auto}`;
+  const auto = bk.autoUrl ? ` ${t('bk.autoOn')}` : '';
+  $('#backup-info').textContent = bk.lastAt ? `${t('bk.last', { date: fmtFull(bk.lastAt) })}${isBackupDue(bk, S.now.date) ? ` ⚠️ ${t('bk.dueNow')}` : ''}${auto}` : `${t('bk.never')}${auto}`;
 }
 
-/** Aviso no Painel quando a cópia está atrasada (ou a automática falhou). */
 function renderBackupDue() {
   const el = $('#backup-due');
   if (!el || !LOCAL) return;
   const bk = S.settings.backup;
-  const due = isBackupDue(bk, S.now.date);
-  if (!due && !autoBackupFailed) {
+  if (!isBackupDue(bk, S.now.date) && !autoBackupFailed) {
     el.hidden = true;
     return;
   }
-  const freq = { weekly: 'semanal', monthly: 'mensal' }[bk.frequency] || '';
-  const last = bk.lastAt ? `Última: ${fmtFullDate(bk.lastAt)}.` : 'Ainda não fez nenhuma.';
+  const last = bk.lastAt ? t('bk.last', { date: fmtFull(bk.lastAt) }) : t('bk.never');
   el.hidden = false;
-  el.innerHTML = `<div class="geo-result error-box">💾 <b>${autoBackupFailed ? 'A cópia automática para o Google falhou.' : `Cópia ${freq} de segurança pendente.`}</b> ${h(last)}
-      ${autoBackupFailed ? `<br><small>${h(autoBackupFailed)}</small>` : '<br><small>Os seus dados só existem neste celular: guarde uma cópia no Drive ou no e-mail.</small>'}
-      <div class="row"><button id="backup-due-share" class="primary">💾 Enviar cópia agora</button>${bk.autoUrl ? '<button id="backup-due-retry">☁️ Tentar o Google de novo</button>' : ''}</div></div>`;
+  el.innerHTML = `<div class="geo-result error-box">💾 <b>${h(autoBackupFailed ? t('bk.autoFailedTitle') : t(bk.frequency === 'monthly' ? 'bk.dueMonthly' : 'bk.dueWeekly'))}</b> ${h(last)}
+      <br><small>${h(autoBackupFailed || t('bk.onlyHere'))}</small>
+      <div class="row"><button id="backup-due-share" class="primary">${h(t('bk.sendNow'))}</button>${bk.autoUrl ? `<button id="backup-due-retry">☁️ ${h(t('bk.retryGoogle'))}</button>` : ''}</div></div>`;
   $('#backup-due-share').onclick = shareBackup;
   $('#backup-due-retry')?.addEventListener('click', () => sendAutoBackup({ url: bk.autoUrl, token: bk.autoToken, email: bk.email }));
 }
@@ -1374,33 +1788,30 @@ $('#backup-auto-now').addEventListener('click', async () => {
   const f = $('#settings-form');
   const url = f.backupUrl.value.trim();
   const token = f.backupToken.value.trim();
-  if (!APPS_SCRIPT_URL_RE.test(url)) return toast('O endereço tem de ser https://script.google.com/macros/s/…/exec');
-  if (!token) return toast('Cole a chave secreta (passo 2 das instruções).');
-  $('#backup-auto-info').textContent = 'A enviar…';
+  if (!APPS_SCRIPT_URL_RE.test(url)) return toast(t('err.scriptUrl'));
+  if (!token) return toast(t('bk.pasteToken'));
+  $('#backup-auto-info').textContent = t('bk.sending');
   const r = await sendAutoBackup({ url, token, email: f.backupEmail.checked });
-  $('#backup-auto-info').textContent = r.ok
-    ? `✅ Funciona! Cópia guardada no Drive${r.emailed ? ' e enviada por e-mail' : ''}. Não se esqueça de Salvar configurações.`
-    : `❌ ${r.error}`;
+  $('#backup-auto-info').textContent = r.ok ? `✅ ${t(r.emailed ? 'bk.testOkEmail' : 'bk.testOk')}` : `❌ ${r.error}`;
 });
 
 $('#export-csv').addEventListener('click', async () => {
   if (LOCAL) await shareOrDownload(`presenca-${S.now.date}.csv`, (await localBackend).exportCsv(), 'text/csv');
-  else location.href = 'api/export.csv';
+  else location.href = `api/export.csv?lang=${getLocale()}`;
 });
 
 // ---------------------------------------------------------------- inicialização
 async function boot() {
-  if (LOCAL) {
-    // Pede ao navegador para não apagar os dados por falta de espaço/uso.
-    navigator.storage?.persist?.().catch(() => {});
-  }
+  if (LOCAL) navigator.storage?.persist?.().catch(() => {});
   const auth = await api('/api/auth');
   $('#logout').hidden = !auth.required;
   if (!auth.ok) return showLogin();
   await load();
 
-  // Check-in automático por localização: ao abrir pela notificação, ou se a
-  // app for aberta dentro da janela e hoje ainda não houver resposta.
+  if (location.hash.startsWith('#cfg=')) checkConfigLink();
+  else if (!S.settings.onboarded) openWizard();
+
+  // Check-in por localização: ao abrir pelo lembrete, ou dentro da janela sem resposta.
   const params = new URLSearchParams(location.search);
   const loc = S.settings.location;
   const todayKey = `geo-asked-${S.now.date}`;
@@ -1411,22 +1822,21 @@ async function boot() {
   const fromLink = params.get('checkin') === 'location';
   const beforeStart = S.settings.rules.startDate && S.now.date < S.settings.rules.startDate;
   const canCheck = loc.enabled && S.settings.offices.some((o) => o.location) && S.today.workingDay && !beforeStart && !S.today.record?.status;
-  if (canCheck && (fromLink || !asked)) {
+  if (canCheck && (fromLink || !asked) && S.settings.onboarded) {
     try {
       sessionStorage.setItem(todayKey, '1');
     } catch {}
-    location.hash = '#painel';
+    if (!location.hash.startsWith('#cfg=')) location.hash = '#painel';
     window.scrollTo(0, 0);
     if (inLocationWindow()) locationCheckin({ fromLink });
-    else if (fromLink) toast(`A verificação por localização só funciona entre ${loc.windowStart} e ${loc.windowEnd}. Registre pelos botões.`);
+    else if (fromLink) toast(t('geo.outsideLink', { from: loc.windowStart, to: loc.windowEnd }));
   }
   if (params.has('checkin')) history.replaceState(null, '', location.pathname + location.hash);
   if (LOCAL) await backupOnOpen();
+  statsTick();
 }
 
-/** Ao abrir a app: se a cópia estiver atrasada e a automática ligada, envia-a. */
 async function backupOnOpen() {
-  // Versões anteriores guardavam a data da última cópia fora dos dados.
   let old = null;
   try {
     old = localStorage.getItem('presenca:lastBackup');
@@ -1441,7 +1851,7 @@ async function backupOnOpen() {
   }
 }
 
+useLocale(savedLocale());
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
 boot().catch((e) => console.error(e));
-// Atualiza quando volta à app (ex.: respondeu pela notificação em outro momento)
-document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && S && load().catch(() => {}));
+document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && S && load().then(statsTick).catch(() => {}));

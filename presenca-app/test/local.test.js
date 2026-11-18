@@ -213,3 +213,58 @@ test('ajustes da cópia: validação do endereço do Google Apps Script', () => 
   assert.equal(ok.data.settings.backup.frequency, 'monthly');
   assert.equal(ok.data.settings.backup.email, true);
 });
+
+test('planejamento livre: acumular escritório agora para ficar em casa no fim do ano', () => {
+  const storage = fakeStorage();
+  const repo = createLocalRepo(storage);
+  const api = createApi({ repo, clock: () => new Date('2026-11-16T10:00:00Z') }); // segunda 16/11
+  const call = (m, p, b) => api.handle(m, p, b);
+  call('POST', '/api/offices', { id: 'principal', name: 'Lisboa', country: 'PT', timezone: 'Europe/Lisbon', customHolidays: [], primary: true });
+  call('PUT', '/api/settings', { rules: { startDate: '2026-11-02' } });
+  // Feito (02–13/11): 4 no escritório, 6 em casa
+  ['2026-11-02', '2026-11-04', '2026-11-09', '2026-11-11'].forEach((d) => call('PUT', `/api/days/${d}`, { status: 'office' }));
+  ['2026-11-03', '2026-11-05', '2026-11-06', '2026-11-10', '2026-11-12', '2026-11-13'].forEach((d) => call('PUT', `/api/days/${d}`, { status: 'home' }));
+  const st0 = call('GET', '/api/state?semester=2026-2').data.report;
+  const plan = (from, to, p) => {
+    for (const w of st0.weeks) for (let i = 0; i < 5; i++) {
+      const d = new Date(Date.parse(w.start) + i * 864e5).toISOString().slice(0, 10);
+      if (d >= from && d <= to && !st0.weeks.some((x) => x.holidayList.some((h) => h.date === d))) call('PUT', `/api/days/${d}`, { plan: p });
+    }
+  };
+  plan('2026-11-16', '2026-12-11', 'office'); // acumular escritório
+  plan('2026-12-14', '2026-12-24', 'home'); // duas semanas em casa
+  call('POST', '/api/absences', { type: 'ferias', start: '2026-12-28', end: '2026-12-31' });
+
+  const r = call('GET', '/api/state?semester=2026-2').data.report;
+  // Base: 41 dias úteis − 4 de férias = 37 → mínimo 19 (50% de 37 = 18,5)
+  assert.equal(r.totals.base, 37);
+  assert.equal(r.requiredOffice, 19);
+  assert.equal(r.totals.plannedOffice, 18); // 16/11–11/12 sem os feriados 01/12 e 08/12
+  assert.equal(r.totals.plannedHome, 9);
+  assert.equal(r.plan.officeWithPlan, 22);
+  assert.equal(r.plan.credit, 3, '3 dias de crédito');
+  assert.equal(Math.round(r.plan.projectedPct * 100), 59);
+  assert.equal(r.plan.neededAfterPlan, 0);
+  assert.equal(r.plan.unplanned, 0);
+  // Sugestão não "congela": com tudo planejado, não sugere mais nada
+  assert.ok(r.weeks.every((w) => w.suggestedOffice === 0));
+  // Acumulado: sobe nas semanas de escritório, desce nas de casa, fecha acima de 50%
+  const byStart = Object.fromEntries(r.weeks.map((w) => [w.start, w]));
+  assert.ok(byStart['2026-12-07'].cumPct > byStart['2026-11-09'].cumPct);
+  assert.ok(byStart['2026-12-21'].cumPct < byStart['2026-12-07'].cumPct);
+  assert.ok(r.weeks.at(-1).cumPct >= 0.5);
+  // Avisos: confirmam o plano em vez de exigir "cota do mês"
+  assert.ok(r.alerts.some((a) => a.level === 'ok' && /crédito de 3 dias/.test(a.text)));
+  assert.ok(!r.alerts.some((a) => /cumprir a própria cota/.test(a.text)));
+});
+
+test('sugestão adapta-se ao plano: planejar uma semana inteira reduz as outras', () => {
+  const { call } = setup(); // hoje 05/11/2026, Lisboa
+  call('PUT', '/api/settings', { rules: { startDate: '2026-11-02' } }); // mínimo 21 de 41
+  const before = call('GET', '/api/state?semester=2026-2').data.report;
+  ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13'].forEach((d) => call('PUT', `/api/days/${d}`, { plan: 'office' }));
+  const after = call('GET', '/api/state?semester=2026-2').data.report;
+  const sumOther = (r) => r.weeks.filter((w) => w.start !== '2026-11-09' && !w.isPast).reduce((a, w) => a + w.recommendedOffice, 0);
+  assert.equal(after.weeks.find((w) => w.start === '2026-11-09').recommendedOffice, 5);
+  assert.ok(sumOther(after) < sumOther(before), `${sumOther(after)} < ${sumOther(before)}`);
+});

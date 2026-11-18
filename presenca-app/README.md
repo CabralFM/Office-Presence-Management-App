@@ -2,7 +2,9 @@
 
 Aplicação web (PWA) para controlar os dias em que você trabalha **no escritório** e **em casa**, e garantir a regra da empresa:
 
-- **regra mãe: ≥ 50% dos dias úteis trabalháveis do semestre no escritório** (jan–jun e jul–dez);
+- **regras de várias empresas:** % dos dias trabalháveis, **N dias por semana** ou **N dias por mês**, com **dias fixos** opcionais (ex.: terça e quinta), apurada por **mês, trimestre, semestre ou ano** — o padrão é ≥ 50% por semestre;
+- **semana de trabalho configurável** (ex.: 4 dias, seg–qui), **8 idiomas** (português BR e PT, inglês, espanhol, francês, alemão, chinês e árabe com escrita da direita para a esquerda) e **Portugal como país padrão**;
+- **assistente inicial** (idioma, país/cidade, regra, data de admissão) e **link para partilhar a configuração da empresa** com colegas (sem dados pessoais);
 - férias, doença e outras ausências **saem da base** (com tipo e justificação), e os 50% aplicam-se ao que sobra;
 - o "máximo de 60 dias em casa" é tratado como o equivalente aos 50% — opcionalmente pode ser aplicado como teto rígido;
 - considerando os **feriados do local de trabalho** (nacionais, regionais, municipais e pontos facultativos) — inclusive quando você trabalha num escritório da empresa **em outro país**.
@@ -28,13 +30,17 @@ Aplicação web (PWA) para controlar os dias em que você trabalha **no escritó
 | **Check-in por localização (opcional)** | Você define o endereço do escritório e uma janela (ex.: 09:00–10:30). Dentro da janela, ao tocar no lembrete/abrir a app, a localização é lida **uma única vez**, a distância é calculada **no seu aparelho** e a app pergunta: *"Você está a 120 m do escritório. Confirma que está no escritório?"*. As coordenadas não são enviadas ao servidor; fora da janela ou depois de responder, a localização não é usada. |
 | **Regra dos 50%** | Mínimo no escritório = 50% dos dias trabalháveis (arredondado para cima). Teto absoluto de dias em casa: opcional, desligado por padrão (ver abaixo). |
 | **Avisos antecipados** | "Outubro fechou com 38% (abaixo de 50%)", "Para novembro cumprir a cota, vá mais 10 dos 17 dias úteis; para recuperar o atraso o ideal são 12", "Restam apenas 8 dias de home office", "Há 2 dias sem registro". |
-| **Planejamento** | Distribui os dias de escritório que faltam pelas semanas/meses restantes (semanas com feriado pedem menos). Botão "Sugerir plano automático" preenche as próximas 4 semanas, preferindo ter–qui. |
+| **Planejamento livre** | A regra é do período, não da semana nem do mês: pode concentrar o escritório agora e ficar em casa depois. Barra fixa "Com o plano: 59% no escritório · ✅ crédito +3"; em cada semana, botões 🏢/🏠 "Semana toda", 🌴 Férias e Limpar, e o acumulado "até aqui: 79%". A sugestão só ocupa os dias ainda livres, e o preenchimento automático nunca mexe no que já planejou. |
 | **Resumos** | Os avisos do painel mostram sempre a situação do mês e do semestre. No modo servidor, também chegam por push no 1º dia útil da semana e do mês. |
 | **Escritórios** | Cadastre cada escritório (ex.: Lisboa, Madrid, São Paulo) com país, região, fuso, endereço e feriados municipais. Um deles é o **principal**. |
 | **Feriados por local de trabalho** | Cada dia usa o calendário do escritório onde você trabalha nesse dia. Brasil e Portugal: cálculo próprio (inclui móveis e facultativos). Outros ~200 países e regiões: biblioteca `date-holidays`, offline. Municipais: editáveis, com modelos (Lisboa, Almada, Porto, Seixal, Sintra, Madrid, São Paulo…). Aba Calendário → "Feriados do semestre" mostra cada feriado e de que escritório vem. |
 | **Viagens de trabalho** | Registre "Madrid, 08 a 12/06": nesses dias valem os feriados **e o fuso** de Madrid, os dias úteis contam como "planejado escritório" e o lembrete chega às 9h locais. |
 | **Perguntar quando muda o local** | (1) Se o fuso do aparelho for diferente do escritório previsto, a app pergunta *"Você está trabalhando em outro local?"* e pré-preenche a viagem. (2) Ao registrar "Escritório" escolhe-se em qual. (3) O check-in por localização reconhece **qual** escritório está mais perto e avisa se não for o previsto. (4) O resumo semanal pergunta se vai trabalhar em outro escritório. |
 | **Férias e ausências** | Tipos: 🌴 Férias, 🤒 Doença, 📄 Licença (parental, casamento, luto…), 🛌 Folga/compensação, 📝 Outra. Registra-se um **período** (ex.: 03 a 14/08) e só os dias úteis contam. **Justificação obrigatória** em todos menos férias (ex.: "Atestado médico nº 4521"). A app avisa ausências sem justificação, não apaga dias já registrados como escritório/casa sem confirmação, e permite editar/remover o período. A justificação vai no CSV exportado. |
+| **Regras de outras empresas** | Ajustes → Regra da empresa: modelos prontos (50% por semestre, 50% por mês, 60% por trimestre, 3 ou 2 dias por semana, terça e quinta fixas, 8 dias por mês) ou personalizada. *Semanal:* cada semana tem a sua meta e semanas passadas não se recuperam. *Mensal:* cada mês tem a sua cota, proporcional a férias e admissão a meio do mês. *Dias fixos:* a app avisa quando um dia fixo foi passado ou planejado em casa. |
+| **Idiomas** | Ajustes → Idioma (ou no assistente). Datas, meses e números no formato de cada idioma; árabe com o layout espelhado. Os nomes dos feriados ficam na língua do país do escritório. |
+| **Partilhar com colegas** | Ajustes → Partilhar com colegas gera um link com a regra, país, cidade e feriados do escritório principal. Quem abre vê um resumo e escolhe "Aplicar". Não vão dias, ausências, localização nem data de admissão. |
+| **Estatísticas de uso (opcional)** | Para quem distribui a app: numa planilha Google **sua**, quantas pessoas a instalaram, quantas usam hoje/7/30 dias, com que frequência, quem usou só uma vez, retenção, países, idiomas e aparelhos. **Só com consentimento** (nada pré-marcado), no máximo 1 envio por dia, sem nomes/e-mails/presenças/localização; desligar apaga o que foi enviado. Configuração: [integrations/google-stats.md](integrations/google-stats.md). |
 | **Exportar** | CSV com todos os registros (para conferência com o RH). |
 | **Cópia de segurança** | *Modo local:* semanal ou mensal. Quando vence, o Painel avisa e, com um toque, partilha `.json` (restaurar) + `.csv` (Excel) para o Drive/Gmail. **Automática e grátis:** com um Google Apps Script na sua conta, a cópia vai sozinha para uma pasta do Drive e para o seu e-mail ([instruções](integrations/google-backup.md)). |
 
@@ -100,8 +106,12 @@ presenca-app/
 ├── src/
 │   ├── core/              ← regras puras, sem I/O — correm no SERVIDOR e no CELULAR
 │   │   ├── api.js           a "API" como função: handle(método, caminho, corpo)
-│   │   ├── compliance.js    metas, ritmo, meses, semanas, avisos
-│   │   ├── dates.js         datas ISO, semestres, fusos horários, Páscoa
+│   │   ├── compliance.js    metas (%, N/semana, N/mês, dias fixos), ritmo, meses, semanas, avisos
+│   │   ├── rule-templates.js modelos de regras de empresas
+│   │   ├── i18n.js          idiomas: t('chave'), plurais, datas pelo Intl, RTL
+│   │   ├── stats.js         estatísticas anônimas (consentimento, envio 1×/dia)
+│   │   ├── locales/         um dicionário por idioma (pt-BR é a referência)
+│   │   ├── dates.js         datas ISO, períodos (mês/trimestre/semestre/ano), fusos, Páscoa
 │   │   ├── holidays.js      feriados BR/PT + outros países (date-holidays) + modelos de cidades
 │   │   ├── offices.js       escritórios, viagens, "que calendário vale em cada dia"
 │   │   ├── absences.js      tipos de ausência e regras de justificação
@@ -120,8 +130,8 @@ presenca-app/
 │   ├── local-backend.js     liga a interface a core/api.js dentro do celular
 │   └── sw.js                service worker: offline (+ push no modo servidor)
 ├── scripts/build-static.mjs ← gera o site estático em dist/ (esbuild)
-├── integrations/          ← script do Google (cópias para Drive + e-mail) e instruções
-└── test/                  ← node:test (58 testes, incluindo o modo local)
+├── integrations/          ← scripts do Google: cópias (Drive + e-mail) e estatísticas de uso (planilha)
+└── test/                  ← node:test (80 testes: regras, idiomas, estatísticas, modo local e servidor)
 ```
 
 - **Por que funciona sem servidor?** Todas as regras são funções puras em `src/core/`. No modo local, a interface chama `core/api.js` diretamente dentro do celular, com os dados no armazenamento do navegador. No modo servidor, o Express chama exatamente a mesma função. Por isso os dois modos se comportam igual e os mesmos testes cobrem ambos.
@@ -131,6 +141,10 @@ presenca-app/
 - **Por que feriados calculados e não uma API?** Funciona offline e permite planejar semestres futuros. Para os outros países usamos `date-holidays`, que traz os dados no pacote.
 - **Por que o fuso do aparelho como sinal de viagem?** Não precisa de GPS nem de permissão. Não pega viagens no mesmo fuso (ex.: Lisboa → Londres), por isso também há a escolha do escritório no registro e a detecção pela localização.
 - **A localização rastreia?** Não. Há um único acesso no código (`getCurrentPosition`, leitura única), nunca `watchPosition`. Só acontece ao abrir a app dentro da janela de horário (ou com um toque seu), dura no máximo ~40 s (rede 10 s + GPS 30 s) e tem um teto absoluto de 2 min.
+- **Por que dicionários próprios e não uma biblioteca de tradução?** São ~520 textos curtos; um objeto por idioma, sem dependências, funciona offline e um teste (`test/i18n.test.js`) garante que nenhum idioma tem chaves ou marcadores `{nome}` em falta. Datas e nomes de meses vêm do `Intl` do navegador, já traduzidos.
+- **Por que o link de configuração vai no `#` do endereço?** O que vem depois do `#` nunca é enviado ao servidor (nem ao GitHub Pages): a configuração passa de celular para celular sem ser guardada em lado nenhum, e sem custo.
+- **Segurança da página:** uma Content-Security-Policy só permite scripts da própria app e ligações ao OpenStreetMap (procura de endereços) e ao Google Apps Script (cópias). No modo servidor, o login tem limite de 10 tentativas erradas por IP a cada 15 min.
+- **Por que as estatísticas vão para uma planilha Google e não para um serviço de analytics?** É grátis, os dados ficam **consigo** (no seu Drive, não num terceiro), e o Google Apps Script não entrega o IP de quem envia. Serviços como Google Analytics ou Firebase pediriam aviso de cookies, partilham dados com terceiros e medem páginas, não "pessoas que voltam". O preço: só contam quem aceita, e uma pessoa com dois aparelhos conta duas vezes.
 - **Por que a localização só no aparelho?** Privacidade: as coordenadas nunca saem do celular, e é leitura única (`getCurrentPosition`), nunca rastreio contínuo.
 
 ## Usar no celular, de graça (sem servidor)
@@ -168,7 +182,8 @@ O GitHub Pages grátis só funciona em repositórios **públicos**. Só o **cód
 
 ### Configurar (uma vez)
 
-1. **Ajustes → Escritórios:** edite o principal (país, modelo da cidade, endereço).
+1. Na primeira abertura, o **assistente** pergunta idioma, país/cidade, regra e data de admissão (pode repeti-lo em Ajustes → Sobre). Se um colega lhe mandou um **link de configuração**, basta abri-lo e tocar em "Aplicar".
+1. **Ajustes → Locais de trabalho:** confira o principal (país, cidade, endereço).
 2. **Ajustes → Lembretes → 📅 Adicionar lembretes ao calendário:**
    - **iPhone:** abre a folha de partilha → escolha **Calendário** (ou abra o arquivo em *Arquivos*) → *Adicionar todos*.
    - **Android (Samsung/outros calendários):** abra o arquivo baixado com o app de calendário.
@@ -192,7 +207,7 @@ Só é necessário se quiser notificações push que repetem **até responder** 
 ```bash
 cd presenca-app
 npm install
-npm test          # 58 testes: regras, ausências, feriados, viagens, localização, cópias, API e modo local
+npm test          # 60 testes: regras, ausências, feriados, viagens, localização, cópias, API e modo local
 npm start         # http://localhost:3000
 ```
 
@@ -248,4 +263,6 @@ Depois toque em **Enviar teste** para confirmar.
 - O aviso de fuso diferente não detecta viagens a países no mesmo fuso (ex.: Lisboa ↔ Londres). Para esses casos, registre a viagem ou escolha o escritório ao responder.
 - Ausências são por **dia inteiro**. Meio dia de férias ou consulta médica de manhã não são modelados: registre o dia como escritório/casa conforme onde trabalhou a maior parte do tempo, ou confirme com o RH como contam.
 - A justificação é texto. Não há envio do documento (atestado em PDF/foto); guarde-o onde o RH pedir.
+- Os **nomes dos feriados** aparecem na língua do país (ex.: "Natal" num escritório em Portugal, mesmo com a app em inglês) — vêm da biblioteca de feriados ou das listas municipais.
+- As traduções foram feitas com cuidado mas sem revisão de falantes nativos; correções são bem-vindas.
 - Aplicação de **um único usuário**. No modo local, colegas podem usar o mesmo endereço: cada celular tem os seus próprios dados.

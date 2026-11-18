@@ -54,22 +54,59 @@ export function lastDayOfMonth(y, m) {
   return new Date(Date.UTC(y, m, 0)).getUTCDate();
 }
 
-/** Semestre que contém a data: 1º = jan–jun, 2º = jul–dez. */
-export function semesterOf(iso) {
+// ---- períodos de apuração da regra --------------------------------------------
+// Cada empresa mede a regra num período diferente: mês, trimestre, semestre ou
+// ano. Um período é { kind, id, year, n, start, end }. Ids:
+//   mês "2026-11" · trimestre "2026-Q4" · semestre "2026-2" (compatível com a
+//   versão anterior) · ano "2026".
+export const PERIOD_KINDS = ['month', 'quarter', 'semester', 'year'];
+const MONTHS_IN = { month: 1, quarter: 3, semester: 6, year: 12 };
+
+function makePeriod(kind, year, n) {
+  const span = MONTHS_IN[kind];
+  const firstMonth = (n - 1) * span + 1;
+  const lastMonth = firstMonth + span - 1;
+  const start = isoFromParts(year, firstMonth, 1);
+  const end = isoFromParts(year, lastMonth, lastDayOfMonth(year, lastMonth));
+  const id =
+    kind === 'month' ? `${year}-${String(n).padStart(2, '0')}` : kind === 'quarter' ? `${year}-Q${n}` : kind === 'semester' ? `${year}-${n}` : `${year}`;
+  return { kind, id, year, n, half: kind === 'semester' ? n : undefined, start, end };
+}
+
+/** Período (do tipo pedido) que contém a data. */
+export function periodOf(iso, kind = 'semester') {
+  const k = MONTHS_IN[kind] ? kind : 'semester';
   const [y, m] = iso.split('-').map(Number);
-  return semester(y, m <= 6 ? 1 : 2);
+  return makePeriod(k, y, Math.floor((m - 1) / MONTHS_IN[k]) + 1);
 }
 
-export function semester(year, half) {
-  const start = isoFromParts(year, half === 1 ? 1 : 7, 1);
-  const end = half === 1 ? isoFromParts(year, 6, 30) : isoFromParts(year, 12, 31);
-  return { id: `${year}-${half}`, year, half, start, end, label: `${half}º semestre de ${year}` };
+export function parsePeriodId(id) {
+  const s = String(id || '');
+  let m;
+  if ((m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(s))) return makePeriod('month', +m[1], +m[2]);
+  if ((m = /^(\d{4})-Q([1-4])$/.exec(s))) return makePeriod('quarter', +m[1], +m[2]);
+  if ((m = /^(\d{4})-([12])$/.exec(s))) return makePeriod('semester', +m[1], +m[2]);
+  if ((m = /^(\d{4})$/.exec(s))) return makePeriod('year', +m[1], 1);
+  return null;
 }
 
-export function parseSemesterId(id) {
-  const m = /^(\d{4})-([12])$/.exec(id || '');
-  return m ? semester(Number(m[1]), Number(m[2])) : null;
+/** O período n posições antes (n<0) ou depois (n>0). */
+export function shiftPeriod(p, n) {
+  const per = 12 / MONTHS_IN[p.kind];
+  const idx = p.year * per + (p.n - 1) + n;
+  return makePeriod(p.kind, Math.floor(idx / per), (idx % per) + 1);
 }
+
+/** Compatibilidade: semestres (versões anteriores e testes). */
+export const semesterOf = (iso) => periodOf(iso, 'semester');
+export const semester = (year, half) => makePeriod('semester', year, half);
+export const parseSemesterId = (id) => {
+  const p = parsePeriodId(id);
+  return p && p.kind === 'semester' ? p : null;
+};
+
+/** Dia de trabalho da pessoa? workdays = dias da semana (0 = domingo … 6 = sábado). */
+export const isWorkday = (iso, workdays = [1, 2, 3, 4, 5]) => workdays.includes(weekday(iso));
 
 export function minutesFromHHMM(hhmm) {
   const [h, m] = String(hhmm).split(':').map(Number);

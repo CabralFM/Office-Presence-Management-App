@@ -1,7 +1,7 @@
 // Service worker: recebe as notificações push e trata os botões
 // "🏢 Escritório" / "🏠 Casa" SEM precisar abrir a app.
 
-const CACHE = 'presenca-v4';
+const CACHE = 'presenca-v5';
 // Caminhos relativos ao service worker: funciona na raiz de um servidor e numa
 // subpasta de um site estático (ex.: GitHub Pages em /Office-Presence-Management-App/).
 const SHELL = ['./', './index.html', './styles.css', './app.js', './config.js', './icon.svg', './manifest.webmanifest'];

@@ -3,15 +3,15 @@
 
 import { computeSemester } from './compliance.js';
 import { buildHolidayMap, expectedOffice, tripForDay } from './offices.js';
-import { addDays, isWeekend, nowInTimeZone } from './dates.js';
+import { addDays, isWorkday, nowInTimeZone } from './dates.js';
 
 /** Feriados de cada dia do intervalo, segundo o escritório que vale nesse dia. */
 export function holidaysFor(settings, start, end, days) {
   return buildHolidayMap(settings, start, end, days);
 }
 
-export function isWorkingDay(date, holidays) {
-  return !isWeekend(date) && !holidays.has(date);
+export function isWorkingDay(date, holidays, workdays) {
+  return isWorkday(date, workdays) && !holidays.has(date);
 }
 
 export function semesterReport(repo, semester, today) {
@@ -24,6 +24,7 @@ export function semesterReport(repo, semester, today) {
     days,
     holidays,
     rules: settings.rules,
+    workdays: settings.workdays,
     defaultPlan: (date) => (tripForDay(settings, date) ? 'office' : null),
   });
   return { report, holidays, days, settings };
@@ -43,7 +44,7 @@ export function localNow(repo, date = new Date()) {
 }
 
 /** Primeiro dia útil da semana/mês — é quando se enviam os resumos. */
-export function firstWorkingDay(fromIso, toIso, holidays) {
-  for (let d = fromIso; d <= toIso; d = addDays(d, 1)) if (isWorkingDay(d, holidays)) return d;
+export function firstWorkingDay(fromIso, toIso, holidays, workdays) {
+  for (let d = fromIso; d <= toIso; d = addDays(d, 1)) if (isWorkingDay(d, holidays, workdays)) return d;
   return null;
 }
