@@ -36,7 +36,7 @@ export function exportBackup() {
 export function backupBundle() {
   const today = api.now().date;
   const report = api.handle('GET', '/api/state').data.report;
-  return { today, filename: `presenca-copia-${today}`, json: exportBackup(), csv: exportCsv(), summary: backupSummary(report, today) };
+  return { today, filename: `onsitely-backup-${today}`, json: exportBackup(), csv: exportCsv(), summary: backupSummary(report, today) };
 }
 
 export function importBackup(text) {

@@ -1,6 +1,6 @@
 {
-  "name": "Presença — Escritório vs. Casa",
-  "short_name": "Presença",
+  "name": "Onsitely — Office attendance tracker",
+  "short_name": "Onsitely",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -8,6 +8,11 @@
   "theme_color": "#1f6feb",
   "lang": "pt-BR",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
   ]
 }

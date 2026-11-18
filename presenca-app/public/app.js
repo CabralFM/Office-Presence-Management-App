@@ -1689,7 +1689,7 @@ function renderLocalCards() {
 $('#cal-ics').addEventListener('click', async () => {
   const { ics, count, until } = (await localBackend).reminderIcs();
   if (!count) return toast(t('rem.noDays'));
-  await shareOrDownload(`presenca-lembretes-${until}.ics`, ics, 'text/calendar');
+  await shareOrDownload(`onsitely-reminders-${until}.ics`, ics, 'text/calendar');
   toast(t('rem.generated', { n: count }));
 });
 $('#cal-google').addEventListener('click', async () => {
@@ -1796,7 +1796,7 @@ $('#backup-auto-now').addEventListener('click', async () => {
 });
 
 $('#export-csv').addEventListener('click', async () => {
-  if (LOCAL) await shareOrDownload(`presenca-${S.now.date}.csv`, (await localBackend).exportCsv(), 'text/csv');
+  if (LOCAL) await shareOrDownload(`onsitely-${S.now.date}.csv`, (await localBackend).exportCsv(), 'text/csv');
   else location.href = `api/export.csv?lang=${getLocale()}`;
 });
 

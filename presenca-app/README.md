@@ -1,4 +1,6 @@
-# Presença — escritório vs. home office
+# Onsitely — controle de presença: escritório vs. home office
+
+> **Onsitely** (de *on-site*, "presencialmente") — antes chamada "Presença". O nome mudou só na interface; os dados de quem já usa a app continuam iguais.
 
 Aplicação web (PWA) para controlar os dias em que você trabalha **no escritório** e **em casa**, e garantir a regra da empresa:
 
@@ -158,9 +160,9 @@ O GitHub Pages grátis só funciona em repositórios **públicos**. Só o **cód
 1. Junte a branch da app à `master` (GitHub → *Pull requests* → *New* → *Merge*).
 2. **Settings → General → Danger Zone → Change visibility → Public.**
 3. **Settings → Pages → Source: GitHub Actions.**
-4. Em **Actions**, o workflow *Publicar Presença* roda sozinho (ou clique em *Run workflow*). Em ~2 min a app fica em `https://cabralfm.github.io/Office-Presence-Management-App/` (o endereço exato aparece em **Settings → Pages**; use-o tal como está, com as maiúsculas).
+4. Em **Actions**, o workflow *Publicar Onsitely* roda sozinho (ou clique em *Run workflow*). Em ~2 min a app fica em `https://cabralfm.github.io/Office-Presence-Management-App/` (o endereço exato aparece em **Settings → Pages**; use-o tal como está, com as maiúsculas).
 
-> **Proteção contra versões antigas:** a publicação só avança se a versão da execução for a mais recente da `master` (verificado no início e logo antes de publicar). Um "Re-run" numa execução antiga termina com um aviso, sem repor o site antigo. Para republicar, use **Actions → Publicar Presença → Run workflow**.
+> **Proteção contra versões antigas:** a publicação só avança se a versão da execução for a mais recente da `master` (verificado no início e logo antes de publicar). Um "Re-run" numa execução antiga termina com um aviso, sem repor o site antigo. Para republicar, use **Actions → Publicar Onsitely → Run workflow**.
 
 ### Opção B — Cloudflare Pages (o repositório continua privado)
 

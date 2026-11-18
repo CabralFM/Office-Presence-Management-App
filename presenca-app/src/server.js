@@ -126,7 +126,7 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
   app.get('/api/export.csv', (req, res) => {
     lang(req);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="presenca.csv"');
+    res.setHeader('Content-Disposition', 'attachment; filename="onsitely.csv"');
     res.send(buildCsv(repo.allDays(), repo.getSettings().offices));
   });
 
@@ -142,6 +142,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const push = setupPush(repo, { subject: process.env.VAPID_SUBJECT || 'mailto:admin@example.com' });
   const app = createApp({ repo, push });
   const port = Number(process.env.PORT) || 3000;
-  app.listen(port, () => console.log(`Presença: http://localhost:${port}`));
+  app.listen(port, () => console.log(`Onsitely: http://localhost:${port}`));
   startScheduler(repo, push);
 }

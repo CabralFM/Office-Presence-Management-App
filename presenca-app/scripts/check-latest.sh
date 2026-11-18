@@ -28,6 +28,6 @@ if [ "$latest" = "$current" ]; then
   echo "Versão ${current:0:7} é a mais recente de '${BRANCH}': pode publicar."
   echo "ok=true" >>"$OUT"
 else
-  echo "::warning title=Versão antiga — não publicada::Esta execução é da versão ${current:0:7}, mas '${BRANCH}' já está em ${latest:0:7}. Para não repor um site antigo, nada foi publicado. Para republicar, use Actions → Publicar Presença → Run workflow (usa sempre a versão mais recente)."
+  echo "::warning title=Versão antiga — não publicada::Esta execução é da versão ${current:0:7}, mas '${BRANCH}' já está em ${latest:0:7}. Para não repor um site antigo, nada foi publicado. Para republicar, use Actions → Publicar Onsitely → Run workflow (usa sempre a versão mais recente)."
   echo "ok=false" >>"$OUT"
 fi

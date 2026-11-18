@@ -53,10 +53,10 @@ for (const f of ['index.html', 'styles.css', 'sw.js', 'manifest.webmanifest', 'i
 }
 // Estatísticas anónimas (opcional): o endereço vem da variável de ambiente
 // PRESENCA_STATS_URL (no GitHub: Settings → Secrets and variables → Actions →
-// Variables). Só se aceita um endereço de Google Apps Script.
+// Secrets). Só se aceita um endereço de Google Apps Script. Nunca é impresso no registo.
 const statsUrl = (process.env.PRESENCA_STATS_URL || '').trim();
 if (statsUrl && !STATS_URL_RE.test(statsUrl)) {
-  console.error(`PRESENCA_STATS_URL inválido (tem de ser https://script.google.com/macros/s/…/exec): ${statsUrl}`);
+  console.error('PRESENCA_STATS_URL inválido (tem de ser https://script.google.com/macros/s/…/exec).');
   process.exit(1);
 }
 const cfg = await readFile(join(OUT, 'config.js'), 'utf8');

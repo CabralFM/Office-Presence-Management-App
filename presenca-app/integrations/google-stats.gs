@@ -1,8 +1,14 @@
 /**
- * Presença — estatísticas anónimas de uso, numa planilha Google SUA (grátis).
+ * @OnlyCurrentDoc
+ * ↑ Esta anotação limita a autorização do script a ESTA planilha: mesmo que alguém
+ *   chamasse o endereço /exec, o script não tem permissão para abrir outros arquivos
+ *   do seu Drive, o Gmail ou o resto da conta Google.
+ */
+/**
+ * Onsitely — estatísticas anónimas de uso, numa planilha Google SUA (grátis).
  *
  * Cole este código em Extensões → Apps Script de uma planilha Google nova.
- * A app Presença (só nos aparelhos de quem ACEITOU partilhar estatísticas)
+ * A app Onsitely (só nos aparelhos de quem ACEITOU partilhar estatísticas)
  * envia, no máximo uma vez por dia, um "sinal de vida" com:
  *   código aleatório do aparelho, dia, versão, idioma, país do escritório,
  *   tipo de regra/período, tipo de aparelho (android/ios/desktop), se a app está
@@ -20,6 +26,7 @@
  */
 
 const MAX_NEW_PER_DAY = 500; // trava contra abuso: aparelhos novos aceites por dia
+const MAX_REQUESTS_PER_DAY = 20000; // trava contra abuso: pedidos aceites por dia (todos os tipos)
 const MAX_DEVICES = 20000; // trava contra abuso: total de aparelhos
 const KEEP_DAYS = 400; // ~13 meses: dados mais antigos são apagados (boa prática do RGPD)
 const SHEETS = {
@@ -39,11 +46,11 @@ function configurar() {
 
 /** Menu na planilha. */
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('📊 Presença').addItem('Atualizar resumo agora', 'atualizarResumo').addToUi();
+  SpreadsheetApp.getUi().createMenu('📊 Onsitely').addItem('Atualizar resumo agora', 'atualizarResumo').addToUi();
 }
 
 function doGet() {
-  return ContentService.createTextOutput('Presença — estatísticas: ativo.');
+  return ContentService.createTextOutput('Onsitely — estatísticas: ativo.');
 }
 
 /** Recebe o sinal da app (POST com JSON como texto). */
@@ -57,6 +64,7 @@ function doPost(e) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) return reply_({ ok: false, error: 'busy' });
   try {
+    if (!countRequest_()) return reply_({ ok: false, error: 'limit' });
     if (data.type === 'forget') return reply_(forget_(data));
     if (data.type === 'ping') return reply_(ping_(data));
     return reply_({ ok: false, error: 'type' });
@@ -118,6 +126,16 @@ function ping_(raw) {
   return { ok: true };
 }
 
+/** Conta o pedido de hoje; false se já passou o teto diário. */
+function countRequest_() {
+  const props = PropertiesService.getScriptProperties();
+  const key = 'req:' + Utilities.formatDate(new Date(), 'UTC', 'yyyy-MM-dd');
+  const n = Number(props.getProperty(key) || 0);
+  if (n >= MAX_REQUESTS_PER_DAY) return false;
+  props.setProperty(key, String(n + 1));
+  return true;
+}
+
 /** Apagar tudo deste aparelho (a pessoa desligou as estatísticas). */
 function forget_(raw) {
   if (!UUID.test(raw.id || '')) return { ok: false, error: 'invalid' };
@@ -143,6 +161,8 @@ function atualizarResumo() {
   const d30 = daysAgo(29);
 
   purgeOld_(daysAgo(KEEP_DAYS));
+  const props = PropertiesService.getScriptProperties();
+  Object.keys(props.getProperties()).forEach((k) => /^(new|req):/.test(k) && k.slice(4) < daysAgo(2) && props.deleteProperty(k));
   const devRows = rows_(sheet_('devices'));
   const actRows = rows_(sheet_('activity')).map((r) => [asDay_(r[0]), r[1]]);
   const devices = devRows.map((r) => ({ id: r[0], first: asDay_(r[1]), last: asDay_(r[2]), days: Number(r[3]) || 0, lang: r[5], country: r[6], rule: r[7], platform: r[9], installed: r[10] === 'sim', onboarded: r[11] === 'sim' }));
@@ -159,7 +179,7 @@ function atualizarResumo() {
   const old30 = devices.filter((x) => x.first <= daysAgo(30));
 
   const main = [
-    ['Presença — estatísticas de uso', ''],
+    ['Onsitely — estatísticas de uso', ''],
     ['Atualizado em', Utilities.formatDate(new Date(), tz, 'dd/MM/yyyy HH:mm')],
     ['', ''],
     ['Aparelhos registados (aceitaram estatísticas)', total],

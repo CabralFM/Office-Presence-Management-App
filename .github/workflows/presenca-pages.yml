@@ -1,4 +1,4 @@
-# Publica a app Presença (modo local, sem servidor) no GitHub Pages — de graça.
+# Publica a app Onsitely (modo local, sem servidor) no GitHub Pages — de graça.
 #
 # Requisitos (uma vez só):
 #   1. Repositório PÚBLICO (o GitHub Pages grátis só funciona em repositórios
@@ -9,7 +9,7 @@
 # Depois disso, cada alteração na pasta presenca-app/ na branch master publica
 # automaticamente em https://<usuario>.github.io/<repositorio>/
 
-name: Publicar Presença (GitHub Pages)
+name: Publicar Onsitely (GitHub Pages)
 
 on:
   push:
@@ -59,8 +59,10 @@ jobs:
         run: npm run build:static
         env:
           # Opcional: endereço da planilha de estatísticas anónimas (integrations/google-stats.md).
-          # Definido em Settings → Secrets and variables → Actions → Variables.
-          PRESENCA_STATS_URL: ${{ vars.PRESENCA_STATS_URL }}
+          # É um SECRET (Settings → Secrets and variables → Actions → Secrets), não uma
+          # variável: num repositório público os registos do Actions são públicos, e só os
+          # secrets aparecem lá como *** em vez do valor.
+          PRESENCA_STATS_URL: ${{ secrets.PRESENCA_STATS_URL }}
       # Segunda verificação, logo antes de publicar: a master pode ter avançado
       # enquanto esta execução corria os testes.
       - id: latest2
