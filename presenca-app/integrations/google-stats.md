@@ -78,14 +78,18 @@ O endereço `/exec` **não é uma senha nem uma porta para a sua conta**. É com
 
 ## 3. Ligar na app publicada (GitHub, sem mexer em código)
 
-1. No GitHub, abra o repositório **Office-Presence-Management-App** → **Settings** → **Secrets and variables** → **Actions** → separador **Variables** → **New repository variable**.
+O endereço **não fica no código** do repositório: guarda-se como **Secret** do GitHub, que ninguém além de si consegue ver (nem nos registos públicos do Actions, onde aparece como `***`).
+
+1. No GitHub, abra o repositório **Office-Presence-Management-App** → **Settings** → **Secrets and variables** → **Actions** → separador **Secrets** → **New repository secret**.
 2. Preencha:
    - **Name:** `PRESENCA_STATS_URL`
-   - **Value:** o URL copiado no passo 2 (`https://script.google.com/macros/s/…/exec`)
-3. **Add variable**.
+   - **Secret:** o URL copiado no passo 2 (`https://script.google.com/macros/s/…/exec`)
+3. **Add secret**.
 4. Separador **Actions** → **Publicar Presença (GitHub Pages)** → **Run workflow** → **Run workflow**. Em ~2 min a app publicada passa a fazer a pergunta.
 
-Para **parar** de recolher: apague a variável e corra de novo o *Run workflow*. A app deixa de perguntar e de enviar.
+Para **parar** de recolher: apague o secret e corra de novo o *Run workflow*. A app deixa de perguntar e de enviar.
+
+> **Importante, para ser honesto:** o Secret esconde o endereço **do GitHub**, mas a app publicada precisa de o conhecer para enviar — por isso ele fica no arquivo `config.js` do site, e quem souber usar as ferramentas de programador do navegador consegue vê-lo. Isto acontece com **qualquer** app ou site que envia dados (o endereço do servidor do Instagram também está no app do Instagram). A segurança **não** depende de esconder o endereço: depende de o endereço só poder fazer o que está na tabela "É seguro?" acima — e nada lá dá acesso à sua conta, ao seu Drive ou à leitura da planilha.
 
 ## 4. Ver os números
 

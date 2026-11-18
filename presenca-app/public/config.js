@@ -6,5 +6,5 @@ export const MODE = 'local';
 
 // Endereço (Google Apps Script) que recebe as estatísticas anónimas de uso — ver
 // integrations/google-stats.md. Vazio = sem estatísticas (a app nem pergunta).
-// No site publicado, vem da variável PRESENCA_STATS_URL do GitHub (scripts/build-static.mjs).
+// No site publicado, vem do secret PRESENCA_STATS_URL do GitHub (scripts/build-static.mjs).
 export const STATS_URL = '';
