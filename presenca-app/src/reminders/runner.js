@@ -4,16 +4,18 @@
 // cada "tique" lê sempre a configuração mais recente.
 
 import { decide } from './scheduler.js';
-import { addDays, mondayOf, semesterOf } from '../core/dates.js';
+import { addDays, mondayOf, periodOf } from '../core/dates.js';
 import {
   dailyMessage, firstWorkingDay, holidaysFor, isWorkingDay, localNow,
   monthlyMessage, semesterReport, weeklyMessage,
 } from '../service.js';
+import { setLocale } from '../core/i18n.js';
 
 export async function tick(repo, push, date = new Date()) {
   const settings = repo.getSettings();
+  setLocale(settings.locale || 'pt-BR'); // notificações no idioma dos Ajustes
   const now = localNow(repo, date);
-  const sem = semesterOf(now.date);
+  const sem = periodOf(now.date, settings.rules.period);
   const day = repo.getDay(now.date);
   const monday = mondayOf(now.date);
   const monthStart = now.date.slice(0, 8) + '01';
@@ -28,7 +30,7 @@ export async function tick(repo, push, date = new Date()) {
     now,
     settings,
     // Antes do início da contagem (admissão) não há lembretes.
-    isWorkingDay: isWorkingDay(now.date, holidays) && !(settings.rules.startDate && now.date < settings.rules.startDate),
+    isWorkingDay: isWorkingDay(now.date, holidays, settings.workdays) && !(settings.rules.startDate && now.date < settings.rules.startDate),
     answered: Boolean(day?.status || day?.plan === 'absence'),
     reminderState: repo.getReminderState(now.date),
     sentKeys: repo.sentKeys([weekKey, monthKey]),

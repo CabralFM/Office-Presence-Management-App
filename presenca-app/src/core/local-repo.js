@@ -9,6 +9,7 @@
 //   - o iPhone apaga dados de SITES não usados → instalar na Tela de Início
 //     (apps instaladas ficam isentas) e pedir armazenamento persistente.
 
+import { t } from './i18n.js';
 import { DEFAULT_SETTINGS, deepMerge } from './settings.js';
 import { normalizeSettings } from './offices.js';
 import { mergeDay, groupAbsences, absenceDates } from './days.js';
@@ -83,11 +84,11 @@ export function createLocalRepo(storage) {
     /** Substitui todos os dados pelos da cópia. Valida antes de tocar em nada. */
     importBackup(data) {
       if (!data || data.format !== BACKUP_FORMAT || typeof data.days !== 'object' || typeof data.settings !== 'object') {
-        throw new Error('Arquivo inválido: não é uma cópia de segurança da app Presença.');
+        throw new Error(t('err.backupFile'));
       }
       const days = {};
       for (const [d, r] of Object.entries(data.days)) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error(`Data inválida na cópia: ${d}`);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error(t('err.backupDate', { date: d }));
         const clean = mergeDay(null, r || {}); // reaplica as regras de validação
         if (clean) days[d] = clean;
       }

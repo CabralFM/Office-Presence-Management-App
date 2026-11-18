@@ -8,7 +8,9 @@
 // dois modos comportam-se exatamente igual — os mesmos testes cobrem ambos.
 
 import { CITY_PRESETS, holidayMap, listCountries, listRegions, optionalHolidaysFor, timezonesFor } from './holidays.js';
-import { addDays, parseISO, parseSemesterId, semesterOf, toISO } from './dates.js';
+import { addDays, parseISO, parsePeriodId, periodOf, toISO, isWorkday, PERIOD_KINDS } from './dates.js';
+import { t, setLocale, DICTIONARIES, periodLabel } from './i18n.js';
+import { RULE_TARGETS } from './rule-templates.js';
 import { DEFAULT_OFFICE, expectedOffice, officeById, tripForDay, buildHolidayMap } from './offices.js';
 import { ABSENCE_TYPES, ABSENCE_LABEL, validateAbsence } from './absences.js';
 import { APPS_SCRIPT_URL_RE, BACKUP_FREQUENCIES } from './backup.js';
@@ -34,10 +36,16 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
     // ---- estado completo para a tela ----------------------------------------
     ['GET', /^\/api\/state$/, (_m, _b, q) => {
       const n = now();
-      const sem = parseSemesterId(q.get('semester')) || semesterOf(n.date);
+      const kind = repo.getSettings().rules.period || 'semester';
+      // ?period= (novo) ou ?semester= (versões anteriores); se o tipo não bater com
+      // a regra atual (ex.: mudou de semestre para trimestre), usa o período de hoje.
+      const asked = parsePeriodId(q.get('period') || q.get('semester'));
+      const sem = asked && asked.kind === kind ? asked : periodOf(n.date, kind);
+      sem.label = periodLabel(sem);
       const { report, holidays, days, settings } = semesterReport(repo, sem, n.date);
       const todayRec = repo.getDay(n.date);
       const todayHolidays = holidaysFor(settings, n.date, n.date, new Map([[n.date, todayRec]]));
+      const workdays = settings.workdays;
       return {
         status: 200,
         data: {
@@ -51,23 +59,23 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
           today: {
             date: n.date,
             record: todayRec,
-            workingDay: isWorkingDay(n.date, todayHolidays),
+            workingDay: isWorkingDay(n.date, todayHolidays, workdays),
             holiday: todayHolidays.get(n.date) || null,
             expectedOfficeId: expectedOffice(settings, n.date).id,
             trip: tripForDay(settings, n.date),
           },
-          meta: { countries: countryNames(), absenceTypes: ABSENCE_TYPES, cityPresets: CITY_PRESETS, ...extraMeta() },
+          meta: { countries: countryNames(), absenceTypes: JSON.parse(JSON.stringify(ABSENCE_TYPES)), cityPresets: CITY_PRESETS, ...extraMeta() },
         },
       };
     }],
 
     // ---- registro de dias ----------------------------------------------------
     ['PUT', /^\/api\/days\/([^/]+)$/, ([date], body) => {
-      if (!isDate(date)) return fail(400, 'Data inválida');
+      if (!isDate(date)) return fail(400, t('err.date'));
       const { status, plan, note, officeId, absenceType, justification } = body;
-      if (officeId && !officeById(repo.getSettings(), officeId)) return fail(400, 'Escritório desconhecido');
+      if (officeId && !officeById(repo.getSettings(), officeId)) return fail(400, t('err.office'));
       // Não faz sentido "registrar" presença no futuro: no futuro é planejamento.
-      if (status && status !== 'absence' && date > now().date) return fail(400, 'Datas futuras só podem ser planejadas (use "plan").');
+      if (status && status !== 'absence' && date > now().date) return fail(400, t('err.futureStatus'));
       if (status === 'absence' || plan === 'absence') {
         const err = validateAbsence({ type: absenceType, justification });
         if (err) return fail(400, err);
@@ -94,9 +102,9 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
     ['POST', /^\/api\/checkin$/, (_m, body) => {
       const { status, source = 'manual', distance = null, date, officeId } = body;
       // Ausências têm tipo e justificação → registram-se por POST /api/absences.
-      if (!['office', 'home'].includes(status)) return fail(400, 'status inválido (para ausências use /api/absences)');
+      if (!['office', 'home'].includes(status)) return fail(400, t('err.status'));
       const settings = repo.getSettings();
-      if (officeId && !officeById(settings, officeId)) return fail(400, 'Escritório desconhecido');
+      if (officeId && !officeById(settings, officeId)) return fail(400, t('err.office'));
       const today = now().date;
       // A notificação leva a data a que se refere; se responder a um lembrete de
       // ontem já depois da meia-noite, registra no dia certo (mas nunca no futuro).
@@ -116,8 +124,8 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
     // local de trabalho) viram ausência — são esses que saem da base dos 50%.
     ['POST', /^\/api\/absences$/, (_m, body) => {
       const { start, end, type, justification = '', overwrite = false, replaceId } = body;
-      if (!isDate(start || '') || !isDate(end || '') || end < start) return fail(400, 'Datas inválidas');
-      if (addDays(start, 366) < end) return fail(400, 'Período longo demais (máx. 1 ano).');
+      if (!isDate(start || '') || !isDate(end || '') || end < start) return fail(400, t('err.dates'));
+      if (addDays(start, 366) < end) return fail(400, t('err.periodTooLong'));
       const err = validateAbsence({ type, justification });
       if (err) return fail(400, err);
 
@@ -126,15 +134,14 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
       const holidays = buildHolidayMap(settings, start, end, days);
       const targets = [];
       for (let d = start; d <= end; d = addDays(d, 1)) {
-        const wd = new Date(d + 'T12:00:00Z').getUTCDay();
-        if (wd !== 0 && wd !== 6 && !holidays.has(d)) targets.push(d);
+        if (isWorkday(d, settings.workdays) && !holidays.has(d)) targets.push(d);
       }
-      if (!targets.length) return fail(400, 'O período não tem dias úteis (só fins de semana/feriados).');
+      if (!targets.length) return fail(400, t('err.noWorkdays'));
 
       // Não apaga silenciosamente dias já registrados como escritório/casa.
       const conflicts = targets.filter((d) => ['office', 'home'].includes(days.get(d)?.status));
       if (conflicts.length && !overwrite) {
-        return fail(409, `${conflicts.length} dia(s) já registrado(s) como escritório/casa.`, { conflicts });
+        return fail(409, t('err.conflicts', { n: conflicts.length }), { conflicts });
       }
       if (replaceId) repo.deleteAbsence(replaceId); // edição = substitui o período anterior
       const absenceId = newId();
@@ -150,7 +157,7 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
     // ---- escritórios -------------------------------------------------------------
     ['GET', /^\/api\/countries\/([^/]+)$/, ([code]) => {
       const c = code.toUpperCase();
-      if (!countryNames()[c]) return fail(404, 'País desconhecido');
+      if (!countryNames()[c]) return fail(404, t('err.country'));
       return { status: 200, data: { regions: listRegions(c), timezones: timezonesFor(c), optional: optionalHolidaysFor(c), presets: CITY_PRESETS[c] || [] } };
     }],
 
@@ -179,7 +186,7 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
      * escritório mostrar a lista completa ANTES de salvar.
      */
     ['POST', /^\/api\/holidays\/preview$/, (_m, o) => {
-      if (!countryNames()[o.country]) return fail(400, 'país inválido');
+      if (!countryNames()[o.country]) return fail(400, t('err.country'));
       const year = Number.isInteger(o.year) && o.year > 1900 && o.year < 2200 ? o.year : Number(now().date.slice(0, 4));
       const map = holidayMap(
         { country: o.country, region: o.region || '', optionalHolidays: o.optionalHolidays || {}, customHolidays: Array.isArray(o.customHolidays) ? o.customHolidays : [] },
@@ -196,8 +203,8 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
 
     ['DELETE', /^\/api\/offices\/([^/]+)$/, ([id]) => {
       const settings = repo.getSettings();
-      if (settings.offices.length <= 1) return fail(400, 'É preciso ter pelo menos um escritório.');
-      if (id === settings.primaryOfficeId) return fail(400, 'Defina outro escritório como principal antes de remover este.');
+      if (settings.offices.length <= 1) return fail(400, t('err.lastOffice'));
+      if (id === settings.primaryOfficeId) return fail(400, t('err.primaryOffice'));
       repo.updateSettings({
         offices: settings.offices.filter((o) => o.id !== id),
         trips: settings.trips.filter((t) => t.officeId !== id),
@@ -210,9 +217,9 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
     // dias úteis contam como "planejado escritório".
     ['POST', /^\/api\/trips$/, (_m, { officeId, start, end, note = '' }) => {
       const settings = repo.getSettings();
-      if (!officeById(settings, officeId)) return fail(400, 'Escritório desconhecido');
-      if (!isDate(start || '') || !isDate(end || '') || end < start) return fail(400, 'Datas inválidas');
-      if (addDays(start, 92) < end) return fail(400, 'Viagem longa demais (máx. 3 meses).');
+      if (!officeById(settings, officeId)) return fail(400, t('err.office'));
+      if (!isDate(start || '') || !isDate(end || '') || end < start) return fail(400, t('err.dates'));
+      if (addDays(start, 92) < end) return fail(400, t('err.tripTooLong'));
       const clash = settings.trips.find((t) => t.start <= end && start <= t.end);
       if (clash) return fail(400, `Conflita com outra viagem (${clash.start} a ${clash.end}).`);
       const trip = { id: newId(), officeId, start, end, note: String(note).slice(0, 200) };
@@ -233,7 +240,7 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
       // Escritórios e viagens têm rotas próprias (com validação própria).
       delete patch.offices;
       delete patch.trips;
-      if (patch.primaryOfficeId && !officeById(repo.getSettings(), patch.primaryOfficeId)) return fail(400, 'Escritório desconhecido');
+      if (patch.primaryOfficeId && !officeById(repo.getSettings(), patch.primaryOfficeId)) return fail(400, t('err.office'));
       return ok({ settings: repo.updateSettings(patch) });
     }],
   ];
@@ -243,6 +250,8 @@ export function createApi({ repo, extraMeta = () => ({}), clock = () => new Date
    */
   function handle(method, url, body = {}) {
     const u = new URL(url, 'http://local');
+    const lang = u.searchParams.get('lang');
+    if (lang && DICTIONARIES[lang]) setLocale(lang);
     for (const [m, re, fn] of routes) {
       if (m !== method.toUpperCase()) continue;
       const match = re.exec(u.pathname);
@@ -259,50 +268,60 @@ export function validateSettingsPatch(p) {
   const e = [];
   if (p.rules) {
     const { officePct, maxHomeDays } = p.rules;
-    if (officePct !== undefined && !(Number.isInteger(officePct) && officePct >= 0 && officePct <= 100)) e.push('percentagem deve ser 0–100');
-    if (maxHomeDays !== undefined && !(Number.isInteger(maxHomeDays) && maxHomeDays >= 0 && maxHomeDays <= 200)) e.push('máximo de dias em casa inválido');
-    if (p.rules.enforceHomeCap !== undefined && typeof p.rules.enforceHomeCap !== 'boolean') e.push('enforceHomeCap deve ser verdadeiro/falso');
-    if (p.rules.startDate !== undefined && p.rules.startDate !== null && !isDate(p.rules.startDate)) e.push('data de início inválida');
+    if (officePct !== undefined && !(Number.isInteger(officePct) && officePct >= 0 && officePct <= 100)) e.push(t('err.pct'));
+    if (maxHomeDays !== undefined && !(Number.isInteger(maxHomeDays) && maxHomeDays >= 0 && maxHomeDays <= 200)) e.push(t('err.maxHome'));
+    if (p.rules.enforceHomeCap !== undefined && typeof p.rules.enforceHomeCap !== 'boolean') e.push(t('err.generic'));
+    if (p.rules.startDate !== undefined && p.rules.startDate !== null && !isDate(p.rules.startDate)) e.push(t('err.startDate'));
+    const r = p.rules;
+    if (r.target !== undefined && !RULE_TARGETS.includes(r.target)) e.push(t('err.generic'));
+    if (r.period !== undefined && !PERIOD_KINDS.includes(r.period)) e.push(t('err.generic'));
+    if (r.daysPerWeek !== undefined && !(Number.isInteger(r.daysPerWeek) && r.daysPerWeek >= 1 && r.daysPerWeek <= 7)) e.push(t('err.daysPerWeek'));
+    if (r.daysPerMonth !== undefined && !(Number.isInteger(r.daysPerMonth) && r.daysPerMonth >= 1 && r.daysPerMonth <= 31)) e.push(t('err.daysPerMonth'));
+    if (r.fixedDays !== undefined && !(Array.isArray(r.fixedDays) && r.fixedDays.every((d) => Number.isInteger(d) && d >= 0 && d <= 6))) e.push(t('err.weekdays'));
   }
   if (p.reminder) {
     const r = p.reminder;
-    for (const k of ['time', 'until']) if (r[k] !== undefined && !HHMM_RE.test(r[k])) e.push(`hora inválida em ${k}`);
-    if (r.repeatMinutes !== undefined && !(Number.isInteger(r.repeatMinutes) && r.repeatMinutes >= 5)) e.push('repetição mínima de 5 minutos');
-    if (r.weekdays !== undefined && !(Array.isArray(r.weekdays) && r.weekdays.every((d) => Number.isInteger(d) && d >= 0 && d <= 6))) e.push('dias da semana inválidos');
+    for (const k of ['time', 'until']) if (r[k] !== undefined && !HHMM_RE.test(r[k])) e.push(t('err.time'));
+    if (r.repeatMinutes !== undefined && !(Number.isInteger(r.repeatMinutes) && r.repeatMinutes >= 5)) e.push(t('err.repeat'));
+    if (r.weekdays !== undefined && !(Array.isArray(r.weekdays) && r.weekdays.every((d) => Number.isInteger(d) && d >= 0 && d <= 6))) e.push(t('err.weekdays'));
   }
+  if (p.workdays !== undefined && !(Array.isArray(p.workdays) && p.workdays.length >= 1 && p.workdays.every((d) => Number.isInteger(d) && d >= 0 && d <= 6))) e.push(t('err.workdays'));
+  if (p.locale !== undefined && p.locale !== null && !DICTIONARIES[p.locale]) e.push(t('err.generic'));
+  if (p.companyName !== undefined && !(typeof p.companyName === 'string' && p.companyName.length <= 60)) e.push(t('err.generic'));
+  if (p.onboarded !== undefined && typeof p.onboarded !== 'boolean') e.push(t('err.generic'));
   if (p.backup) {
     const b = p.backup;
-    if (b.frequency !== undefined && !(b.frequency in BACKUP_FREQUENCIES)) e.push('frequência de cópia inválida');
-    if (b.lastAt !== undefined && b.lastAt !== null && !isDate(b.lastAt)) e.push('data da última cópia inválida');
-    if (b.autoUrl !== undefined && b.autoUrl !== '' && !APPS_SCRIPT_URL_RE.test(b.autoUrl)) e.push('endereço do script inválido: deve ser https://script.google.com/macros/s/…/exec');
-    if (b.autoToken !== undefined && !(typeof b.autoToken === 'string' && b.autoToken.length <= 100)) e.push('chave secreta inválida');
-    if (b.email !== undefined && typeof b.email !== 'boolean') e.push('opção de e-mail inválida');
+    if (b.frequency !== undefined && !(b.frequency in BACKUP_FREQUENCIES)) e.push(t('err.backupFreq'));
+    if (b.lastAt !== undefined && b.lastAt !== null && !isDate(b.lastAt)) e.push(t('err.date'));
+    if (b.autoUrl !== undefined && b.autoUrl !== '' && !APPS_SCRIPT_URL_RE.test(b.autoUrl)) e.push(t('err.scriptUrl'));
+    if (b.autoToken !== undefined && !(typeof b.autoToken === 'string' && b.autoToken.length <= 100)) e.push(t('err.token'));
+    if (b.email !== undefined && typeof b.email !== 'boolean') e.push(t('err.generic'));
   }
   if (p.location) {
     const l = p.location;
-    for (const k of ['windowStart', 'windowEnd']) if (l[k] !== undefined && !HHMM_RE.test(l[k])) e.push(`hora inválida em ${k}`);
+    for (const k of ['windowStart', 'windowEnd']) if (l[k] !== undefined && !HHMM_RE.test(l[k])) e.push(t('err.time'));
   }
   return e;
 }
 
 export function validateOffice(o) {
   const e = [];
-  if (!o.name || String(o.name).length > 60) e.push('nome obrigatório (até 60 caracteres)');
-  if (!countryNames()[o.country]) e.push('país inválido');
-  if (o.region && !listRegions(o.country)[o.region]) e.push('região inválida para o país');
+  if (!o.name || String(o.name).length > 60) e.push(t('err.officeName'));
+  if (!countryNames()[o.country]) e.push(t('err.country'));
+  if (o.region && !listRegions(o.country)[o.region]) e.push(t('err.region'));
   if (o.timezone) {
     try {
       new Intl.DateTimeFormat('en', { timeZone: o.timezone });
     } catch {
-      e.push('fuso horário inválido');
+      e.push(t('err.timezone'));
     }
   }
-  if (o.radiusM !== undefined && !(Number.isFinite(o.radiusM) && o.radiusM >= 50 && o.radiusM <= 5000)) e.push('raio deve estar entre 50 e 5000 m');
-  if (o.city !== undefined && o.city !== null && !(typeof o.city === 'string' && o.city.length <= 40)) e.push('cidade inválida');
-  if (o.location && !(Number.isFinite(o.location.lat) && Number.isFinite(o.location.lng))) e.push('coordenadas inválidas');
+  if (o.radiusM !== undefined && !(Number.isFinite(o.radiusM) && o.radiusM >= 50 && o.radiusM <= 5000)) e.push(t('err.radius'));
+  if (o.city !== undefined && o.city !== null && !(typeof o.city === 'string' && o.city.length <= 40)) e.push(t('err.generic'));
+  if (o.location && !(Number.isFinite(o.location.lat) && Number.isFinite(o.location.lng))) e.push(t('err.generic'));
   if (o.customHolidays !== undefined) {
-    if (!Array.isArray(o.customHolidays)) e.push('feriados locais inválidos');
-    else for (const h of o.customHolidays) if (!/^(\d{4}-)?\d{2}-\d{2}$/.test(h?.date || '') || !h?.name) e.push(`feriado inválido: ${JSON.stringify(h)}`);
+    if (!Array.isArray(o.customHolidays)) e.push(t('err.holidays'));
+    else for (const h of o.customHolidays) if (!/^(\d{4}-)?\d{2}-\d{2}$/.test(h?.date || '') || !h?.name) e.push(t('err.holiday', { name: String(h?.name || h?.date || '?') }));
   }
   return e;
 }

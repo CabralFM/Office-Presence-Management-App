@@ -13,7 +13,8 @@
 // Limitação honesta: o calendário não sabe se você já respondeu, por isso os
 // alertas repetidos tocam mesmo que já tenha registrado o dia.
 
-import { addDays, isWeekend, minutesFromHHMM, zonedTimeToUtc } from './dates.js';
+import { addDays, isWorkday, minutesFromHHMM, zonedTimeToUtc } from './dates.js';
+import { t } from './i18n.js';
 import { expectedOffice } from './offices.js';
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -58,12 +59,12 @@ export function buildReminderIcs({ settings, days, holidays, from, to, appUrl, s
     'PRODID:-//Presenca//Lembretes//PT',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    'X-WR-CALNAME:Presença — lembretes',
+    fold(`X-WR-CALNAME:${esc(t('ics.calName'))}`),
   ];
   let count = 0;
   for (let d = from; d <= to; d = addDays(d, 1)) {
     const wd = new Date(d + 'T12:00:00Z').getUTCDay();
-    if (isWeekend(d) || holidays.has(d) || !r.weekdays.includes(wd)) continue;
+    if (!isWorkday(d, settings.workdays) || holidays.has(d) || !r.weekdays.includes(wd)) continue;
     if (settings.rules?.startDate && d < settings.rules.startDate) continue; // antes da admissão
     const rec = days.get(d);
     if (rec?.status || rec?.plan === 'absence') continue; // já respondido / férias
@@ -77,13 +78,13 @@ export function buildReminderIcs({ settings, days, holidays, from, to, appUrl, s
       `DTSTAMP:${icsDate(stamp)}`,
       `DTSTART:${icsDate(start)}`,
       `DTEND:${icsDate(end)}`,
-      fold(`SUMMARY:${esc(`📍 Presença: escritório ou casa?${where}`)}`),
-      fold(`DESCRIPTION:${esc(`Abra a app e registre onde está trabalhando hoje.\n${appUrl}`)}`),
+      fold(`SUMMARY:${esc(`📍 ${t('ics.summary')}${where}`)}`),
+      fold(`DESCRIPTION:${esc(`${t('ics.description')}\n${appUrl}`)}`),
       fold(`URL:${appUrl}`),
       'TRANSP:TRANSPARENT',
     );
     for (const m of alarms) {
-      lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', fold(`DESCRIPTION:${esc('Registrar presença: escritório ou casa?')}`), `TRIGGER:PT${m}M`, 'END:VALARM');
+      lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', fold(`DESCRIPTION:${esc(t('ics.alarm'))}`), `TRIGGER:PT${m}M`, 'END:VALARM');
     }
     lines.push('END:VEVENT');
     count++;
@@ -104,9 +105,9 @@ export function googleCalendarLink({ settings, appUrl, firstDate }) {
   const byday = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].filter((_, i) => r.weekdays.includes(i)).join(',');
   const params = new URLSearchParams({
     action: 'TEMPLATE',
-    text: '📍 Presença: escritório ou casa?',
+    text: `📍 ${t('ics.summary')}`,
     dates: `${icsDate(start)}/${icsDate(end)}`,
-    details: `Abra a app e registre onde está trabalhando hoje.\n${appUrl}`,
+    details: `${t('ics.description')}\n${appUrl}`,
     recur: `RRULE:FREQ=WEEKLY;BYDAY=${byday}`,
     ctz: office.timezone,
   });

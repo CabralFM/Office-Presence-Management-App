@@ -15,6 +15,7 @@
 
 import Holidays from 'date-holidays';
 import { addDays, easterSunday, isoFromParts } from './dates.js';
+import { t, shortLang } from './i18n.js';
 
 export const COUNTRIES = {
   BR: { name: 'Brasil', timezone: 'America/Sao_Paulo' },
@@ -22,25 +23,20 @@ export const COUNTRIES = {
 };
 
 /** Pontos facultativos que muitas empresas concedem — o usuário liga/desliga. */
+// Nome traduzido no momento do uso (getter), no idioma atual da app.
+const opt = (key, nameKey) => ({
+  key,
+  get name() {
+    return t(nameKey);
+  },
+});
 export const OPTIONAL_HOLIDAYS = {
-  BR: [
-    { key: 'carnaval', name: 'Carnaval (segunda e terça)' },
-    { key: 'corpusChristi', name: 'Corpus Christi' },
-    { key: 'vesperaNatal', name: 'Véspera de Natal (24/12)' },
-    { key: 'vesperaAnoNovo', name: 'Véspera de Ano Novo (31/12)' },
-  ],
-  PT: [
-    { key: 'carnaval', name: 'Carnaval (terça-feira)' },
-    { key: 'vesperaNatal', name: 'Véspera de Natal (24/12)' },
-    { key: 'vesperaAnoNovo', name: 'Véspera de Ano Novo (31/12)' },
-  ],
-  OTHER: [
-    { key: 'vesperaNatal', name: 'Véspera de Natal (24/12)' },
-    { key: 'vesperaAnoNovo', name: 'Véspera de Ano Novo (31/12)' },
-  ],
+  BR: [opt('carnaval', 'opt.carnavalBR'), opt('corpusChristi', 'opt.corpusChristi'), opt('vesperaNatal', 'opt.xmasEve'), opt('vesperaAnoNovo', 'opt.nyEve')],
+  PT: [opt('carnaval', 'opt.carnavalPT'), opt('vesperaNatal', 'opt.xmasEve'), opt('vesperaAnoNovo', 'opt.nyEve')],
+  OTHER: [opt('vesperaNatal', 'opt.xmasEve'), opt('vesperaAnoNovo', 'opt.nyEve')],
 };
 
-export const optionalHolidaysFor = (country) => OPTIONAL_HOLIDAYS[country] || OPTIONAL_HOLIDAYS.OTHER;
+export const optionalHolidaysFor = (country) => (OPTIONAL_HOLIDAYS[country] || OPTIONAL_HOLIDAYS.OTHER).map((o) => ({ key: o.key, name: o.name }));
 
 // ---- outros países (date-holidays) -----------------------------------------
 const hdCache = new Map();
@@ -52,13 +48,13 @@ function hd(country, region) {
 
 /** Lista de países ({código: nome em português}). */
 export function listCountries() {
-  return new Holidays().getCountries('pt');
+  return new Holidays().getCountries(shortLang());
 }
 
 /** Regiões/estados de um país (ex.: ES → {MD: 'Comunidade de Madrid', ...}). */
 export function listRegions(country) {
   if (country === 'BR' || country === 'PT') return {};
-  return new Holidays().getStates(country, 'pt') || {};
+  return new Holidays().getStates(country, shortLang()) || {};
 }
 
 export function timezonesFor(country) {
@@ -72,7 +68,7 @@ export function timezonesFor(country) {
 
 function libraryHolidays(country, year, region) {
   try {
-    return (hd(country, region).getHolidays(year, 'pt') || [])
+    return (hd(country, region).getHolidays(year, shortLang()) || [])
       .filter((x) => x.type === 'public')
       .map((x) => ({ date: x.date.slice(0, 10), name: x.name, type: 'nacional' }));
   } catch {

@@ -7,7 +7,8 @@ import { createLocalRepo } from './core/local-repo.js';
 import { buildCsv } from './core/export.js';
 import { buildReminderIcs, googleCalendarLink } from './core/calendar.js';
 import { buildHolidayMap } from './core/offices.js';
-import { semesterOf } from './core/dates.js';
+import { semesterOf, addDays } from './core/dates.js';
+import { t } from './core/i18n.js';
 import { backupSummary } from './core/backup.js';
 
 const repo = createLocalRepo(window.localStorage);
@@ -43,16 +44,18 @@ export function importBackup(text) {
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error('O arquivo não é um JSON válido.');
+    throw new Error(t('err.json'));
   }
   return repo.importBackup(data);
 }
 
-/** .ics com um lembrete por dia útil de hoje até ao fim do semestre. */
+/** .ics com um lembrete por dia útil de hoje até ao fim do semestre (mín. 3 meses). */
 export function reminderIcs() {
   const settings = repo.getSettings();
   const today = api.now().date;
-  const end = semesterOf(today).end;
+  // Até ao fim do semestre, mas sempre pelo menos ~3 meses.
+  const semEnd = semesterOf(today).end;
+  const end = semEnd > addDays(today, 90) ? semEnd : addDays(today, 90);
   const days = repo.getDays(today, end);
   const holidays = buildHolidayMap(settings, today, end, days);
   // O link do lembrete pede a verificação por localização (se estiver ligada).

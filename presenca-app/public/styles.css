@@ -38,7 +38,7 @@ label { display: block; margin: 8px 0; font-size: 14px; color: var(--muted); }
 label > input, label > select, label > .row { margin-top: 4px; }
 label.check { display: flex; gap: 8px; align-items: center; color: var(--text); }
 fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; }
-fieldset label { display: inline-flex; gap: 6px; margin-right: 12px; color: var(--text); }
+fieldset label { display: inline-flex; gap: 6px; margin-inline-end: 12px; color: var(--text); }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
 .row > input { flex: 1; min-width: 140px; }
 .row.end { justify-content: flex-end; }
@@ -77,13 +77,13 @@ fieldset label { display: inline-flex; gap: 6px; margin-right: 12px; color: var(
 
 /* Avisos */
 .alerts { list-style: none; margin: 0; padding: 0; }
-.alerts li { padding: 8px 10px 8px 12px; border-left: 4px solid var(--primary); margin-bottom: 6px; border-radius: 4px; background: var(--bg); }
+.alerts li { padding: 8px 10px 8px 12px; border-inline-start: 4px solid var(--primary); margin-bottom: 6px; border-radius: 4px; background: var(--bg); }
 .alerts li.warn { border-color: var(--warn); } .alerts li.danger { border-color: var(--danger); } .alerts li.ok { border-color: var(--ok); }
 
 /* Tabelas */
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th, td { text-align: start; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; }
 tr.current td { font-weight: 600; }
 .low { color: var(--danger); font-weight: 600; } .good { color: var(--ok); font-weight: 600; }
@@ -92,8 +92,8 @@ tr.current td { font-weight: 600; }
 .month { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 12px; }
 .month h3 { text-transform: capitalize; display: flex; justify-content: space-between; }
 .month h3 small { color: var(--muted); font-weight: 400; font-size: 13px; }
-.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.cal .dow { text-align: center; font-size: 12px; color: var(--muted); }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cal .dow { text-align: center; font-size: 12px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: clip; }
 .day { aspect-ratio: 1 / 1; border-radius: 8px; border: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; background: var(--card); position: relative; padding: 0; }
 .day small { font-size: 9px; line-height: 1; }
 .day.weekend { opacity: .35; cursor: default; }
@@ -132,11 +132,11 @@ tr.current td { font-weight: 600; }
 .stack > i.plan { opacity: .45; }
 .stack .min { position: absolute; top: -3px; bottom: -3px; width: 3px; background: var(--text); border-radius: 2px; }
 .plan-legend { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 13px; color: var(--muted); }
-.plan-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.plan-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-inline-end: 4px; vertical-align: -1px; }
 .verdict { margin: 6px 0 0; font-size: 14px; }
 .week header { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.week .days { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 8px; }
-.week .days button { padding: 6px 2px; font-size: 12px; }
+.week .days { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-top: 8px; }
+.week .days button { padding: 6px 2px; font-size: 12px; min-width: 0; overflow: hidden; }
 .week .days button.office, .week .days button.plan-office { background: color-mix(in srgb, var(--office) 25%, var(--card)); }
 .week .days button.home, .week .days button.plan-home { background: color-mix(in srgb, var(--home) 25%, var(--card)); }
 .week .days button.office, .week .days button.home { font-weight: 700; }
@@ -149,7 +149,7 @@ dialog::backdrop { background: rgb(0 0 0 / .4); }
 #toast.show { opacity: 1; }
 
 .chip.trip { color: var(--text); border: 1px solid var(--border); }
-.day .trip { position: absolute; top: 1px; right: 3px; font-size: 9px; }
+.day .trip { position: absolute; top: 1px; inset-inline-end: 3px; font-size: 9px; }
 .grid-trip { display: grid; gap: 0 10px; align-items: end; }
 @media (min-width: 560px) { .grid-trip { grid-template-columns: 1.4fr 1fr 1fr 1.2fr auto; } }
 label.inline { display: flex; gap: 8px; align-items: center; } label.inline select { width: auto; flex: 1; }
@@ -170,3 +170,19 @@ fieldset.types { display: grid; grid-template-columns: repeat(auto-fit, minmax(1
 fieldset.types label { display: flex; gap: 8px; align-items: center; margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
 fieldset.types label:has(input:checked) { outline: 2px solid var(--primary); }
 .list li .warn-txt { color: var(--warn); font-weight: 600; }
+
+/* ---- v2: regras, assistente, partilha, sobre, idiomas ---- */
+.week .days button.fixed { box-shadow: inset 0 -3px 0 var(--office); }
+#rule-summary { font-weight: 600; }
+.footer { text-align: center; margin: 24px 0 8px; font-size: 13px; }
+.footer a { color: var(--muted, inherit); }
+.credits { padding-inline-start: 18px; margin: 4px 0; }
+.credits li { margin: 4px 0; }
+.osm { font-size: 12px; }
+.wiz-tips { padding-inline-start: 18px; }
+#wiz-templates { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
+#wiz-templates label { display: flex; gap: 8px; align-items: center; margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+#wiz-templates label:has(input:checked) { outline: 2px solid var(--primary); }
+dialog h4 { margin: 14px 0 4px; }
+[dir=rtl] .tabs, [dir=rtl] .row { direction: rtl; }
+[dir=rtl] input[type=date], [dir=rtl] input[type=url], [dir=rtl] input[type=number] { direction: ltr; text-align: end; }

@@ -14,6 +14,7 @@
 // prática a cópia sai no primeiro acesso depois de vencer o prazo.
 
 import { parseISO } from './dates.js';
+import { t, fmtFull, periodLabel } from './i18n.js';
 
 export const BACKUP_FREQUENCIES = { weekly: 'Semanal', monthly: 'Mensal', off: 'Desligada' };
 
@@ -37,14 +38,13 @@ export function isBackupDue(backup, today) {
   return daysBetween(last, today) >= 7;
 }
 
-/** Texto curto para o e-mail / mensagem da cópia. */
+/** Texto curto para o e-mail / mensagem da cópia (no idioma atual). */
 export function backupSummary(report, today) {
-  const dm = `${today.slice(8, 10)}/${today.slice(5, 7)}/${today.slice(0, 4)}`;
-  const t = report.totals;
+  const tt = report.totals;
   return [
-    `Cópia de segurança da app Presença — ${dm}`,
-    `${report.semester.label}: ${t.office} dia(s) no escritório de ${report.requiredOffice} obrigatório(s); ${t.home} em casa; ${t.absence} ausência(s).`,
-    `Dias trabalháveis: ${t.base}. Faltam ${report.officeNeeded} dia(s) de escritório.`,
-    'Para restaurar: app Presença → Ajustes → Cópia de segurança → Restaurar cópia (arquivo .json).',
+    t('backup.sumTitle', { date: fmtFull(today) }),
+    t('backup.sumPeriod', { period: periodLabel(report.semester), office: tt.office, required: report.requiredOffice, home: tt.home, absence: tt.absence }),
+    t('backup.sumBase', { base: tt.base, need: report.officeNeeded }),
+    t('backup.sumRestore'),
   ].join('\n');
 }

@@ -6,6 +6,8 @@ import { tick } from '../src/reminders/runner.js';
 
 function setup() {
   const repo = openDb(':memory:');
+  // Estes testes usam feriados e fuso do Brasil (o país padrão passou a ser Portugal).
+  repo.updateSettings({ offices: [{ id: 'sp', name: 'São Paulo', country: 'BR', timezone: 'America/Sao_Paulo', customHolidays: [] }], primaryOfficeId: 'sp' });
   const sent = [];
   const push = { sendToAll: async (msg) => (sent.push(msg), { delivered: 1, total: 1 }) };
   return { repo, push, sent };

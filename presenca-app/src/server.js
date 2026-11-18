@@ -18,6 +18,7 @@ import { createApi } from './core/api.js';
 import { buildCsv } from './core/export.js';
 import { localNow } from './core/report.js';
 
+import { t, setLocale, DICTIONARIES } from './core/i18n.js';
 export { validateSettingsPatch, validateOffice } from './core/api.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -48,10 +49,31 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
   };
 
   app.get('/api/auth', (req, res) => res.json({ required: Boolean(token), ok: authed(req) }));
+  // Limite de tentativas: 10 senhas erradas por IP em 15 min (trava adivinhação).
+  const LOGIN_MAX = 10;
+  const LOGIN_WINDOW_MS = 15 * 60_000;
+  const failures = new Map(); // ip → { n, since }
+  const lang = (req) => setLocale(DICTIONARIES[req.query.lang] ? req.query.lang : 'pt-BR');
   app.post('/api/login', (req, res) => {
     if (!token) return res.json({ ok: true });
+    lang(req);
+    const ip = req.ip || 'unknown';
+    const now = Date.now();
+    const f = failures.get(ip);
+    if (f && now - f.since > LOGIN_WINDOW_MS) failures.delete(ip);
+    if ((failures.get(ip)?.n || 0) >= LOGIN_MAX) {
+      res.setHeader('Retry-After', String(Math.ceil((failures.get(ip).since + LOGIN_WINDOW_MS - now) / 1000)));
+      return res.status(429).json({ error: t('err.tooManyLogins') });
+    }
     const given = createHmac('sha256', secret).update(String(req.body?.password || '')).digest('hex');
-    if (given !== token) return res.status(401).json({ error: 'Senha incorreta' });
+    if (!timingSafeEqual(Buffer.from(given), Buffer.from(token))) {
+      const cur = failures.get(ip) || { n: 0, since: now };
+      cur.n++;
+      failures.set(ip, cur);
+      if (failures.size > 10_000) failures.clear(); // evita crescer sem limite
+      return res.status(401).json({ error: t('err.password') });
+    }
+    failures.delete(ip);
     res.setHeader('Set-Cookie', `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${req.secure ? '; Secure' : ''}`);
     res.json({ ok: true });
   });
@@ -59,7 +81,7 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
     res.setHeader('Set-Cookie', `${cookieName}=; Path=/; HttpOnly; Max-Age=0`);
     res.json({ ok: true });
   });
-  app.use('/api', (req, res, next) => (authed(req) ? next() : res.status(401).json({ error: 'Não autenticado' })));
+  app.use('/api', (req, res, next) => (authed(req) ? next() : (lang(req), res.status(401).json({ error: t('login.required') }))));
 
   // ---- rotas comuns (core/api.js) ---------------------------------------------------
   const api = createApi({
@@ -100,7 +122,8 @@ export function createApp({ repo, push, password = process.env.APP_PASSWORD }) {
   });
 
   // ---- exportação (para enviar ao RH ou guardar) -------------------------------------
-  app.get('/api/export.csv', (_req, res) => {
+  app.get('/api/export.csv', (req, res) => {
+    lang(req);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="presenca.csv"');
     res.send(buildCsv(repo.allDays(), repo.getSettings().offices));
